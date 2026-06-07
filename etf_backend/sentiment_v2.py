@@ -1100,6 +1100,82 @@ def m6_volume_dev():
 
 
 # ===== M7: North-bound Capital Flow 5D (沪深港通北向资金) =====
+def _backfill_nbsb_from_kline(snap_file, save_func, is_northbound=True, min_days=5):
+    """从 push2his K-line API 回填北向/南向资金历史快照（当快照不足时调用）
+
+    数据源: push2his.eastmoney.com/api/qt/kamt.kline/get (klt=101 日线)
+    - is_northbound=True: hk2sh(北向沪) + hk2sz(北向深)
+    - is_northbound=False: sh2hk(港股通沪) + sz2hk(港股通深)
+    字段格式: date,dayNetAmtIn(万元),dayAmtRemain,cumulative
+    """
+    try:
+        url = ("https://push2his.eastmoney.com/api/qt/kamt.kline/get?"
+               "fields1=f1,f2,f3,f4&fields2=f51,f52,f53,f54"
+               "&klt=101&lmt={}&ut=b2884a393a59ad64002292a3e90d46a5").format(min_days)
+        raw = http_get(url, timeout=12)
+        data = json.loads(raw).get("data", {})
+        if not data:
+            return
+
+        if is_northbound:
+            arr1 = data.get("hk2sh", [])
+            arr2 = data.get("hk2sz", [])
+        else:
+            arr1 = data.get("sh2hk", [])
+            arr2 = data.get("sz2hk", [])
+
+        if not arr1 and not arr2:
+            return
+
+        # Build date→net map (万元→亿元, sum of both markets)
+        net_map = {}
+        for arr in [arr1, arr2]:
+            for line in arr:
+                if not isinstance(line, str):
+                    continue
+                parts = line.split(",")
+                if len(parts) < 2:
+                    continue
+                date_str = parts[0].strip()
+                net_wan = safe_float(parts[1], 0)  # 万元
+                net_yi = round(net_wan / 10000, 2)  # 亿元
+                net_map[date_str] = net_map.get(date_str, 0) + net_yi
+
+        # Save back to snapshot file (preserve existing, add new)
+        snaps = {}
+        if os.path.exists(snap_file):
+            try:
+                with open(snap_file) as f:
+                    snaps = json.load(f)
+            except Exception:
+                pass
+
+        backfilled = 0
+        for date_str, net_yi in sorted(net_map.items()):
+            if date_str not in snaps and len(date_str) >= 8:
+                # 即使净额=0也是有效数据（表示当日无净流入/流出）
+                snaps[date_str] = {
+                    "date": date_str,
+                    "sh_net_yi": round(net_yi / 2, 2),   # approximate split
+                    "sz_net_yi": round(net_yi / 2, 2),
+                    "total_yi": net_yi,
+                }
+                backfilled += 1
+
+        if backfilled > 0:
+            keys = sorted(snaps.keys(), reverse=True)
+            snaps = {k: snaps[k] for k in keys[:10]}
+            try:
+                with open(snap_file, "w") as f:
+                    json.dump(snaps, f, ensure_ascii=False)
+                print("[Backfill] {} {} days from push2his K-line".format(
+                    "NB" if is_northbound else "SB", backfilled), flush=True)
+            except Exception:
+                pass
+    except Exception as e:
+        print("[Backfill] push2his fallback failed: {}".format(e), flush=True)
+
+
 def m7_northbound():
     """北向资金（沪股通+深股通）近5日净买入额。
 
@@ -1161,9 +1237,13 @@ def m7_northbound():
         if has_data:
             _save_nb_snap(snap_date, sh_net, sz_net, total)
 
-        # 从快照构建历史（最近5日）
+        # 从快照构建历史（最近5日）；不足时从 push2his K-line 回填
         snaps = _load_nb_snaps()
         history = sorted(snaps.values(), key=lambda x: x.get("date", ""))[-5:]
+        if len(history) < 5:
+            _backfill_nbsb_from_kline(SNAP_FILE, None, is_northbound=True, min_days=5)
+            snaps = _load_nb_snaps()
+            history = sorted(snaps.values(), key=lambda x: x.get("date", ""))[-5:]
 
         # 盘中补充逻辑（已写入快照，history 已含当日，无需再补）
 
@@ -1190,6 +1270,10 @@ def m7_northbound():
         try:
             snaps = _load_nb_snaps()
             history = sorted(snaps.values(), key=lambda x: x.get("date", ""))[-5:]
+            if len(history) < 5:
+                _backfill_nbsb_from_kline(SNAP_FILE, None, is_northbound=True, min_days=5)
+                snaps = _load_nb_snaps()
+                history = sorted(snaps.values(), key=lambda x: x.get("date", ""))[-5:]
             if history:
                 last = history[-1]
                 t = last["total_yi"]
@@ -1823,6 +1907,10 @@ def m10_southbound():
 
         snaps = _load_sb_snaps()
         history = sorted(snaps.values(), key=lambda x: x.get("date", ""))[-5:]
+        if len(history) < 5:
+            _backfill_nbsb_from_kline(SNAP_FILE, None, is_northbound=False, min_days=5)
+            snaps = _load_sb_snaps()
+            history = sorted(snaps.values(), key=lambda x: x.get("date", ""))[-5:]
 
         if total >= 30:       sb_status = "大幅南下"
         elif total >= 10:     sb_status = "净流入港股"
@@ -1845,6 +1933,10 @@ def m10_southbound():
             print("[M10 SB] Fallback: snaps keys={}, count={}".format(
                 list(snaps.keys()), len(snaps)), flush=True)
             history = sorted(snaps.values(), key=lambda x: x.get("date", ""))[-5:]
+            if len(history) < 5:
+                _backfill_nbsb_from_kline(SNAP_FILE, None, is_northbound=False, min_days=5)
+                snaps = _load_sb_snaps()
+                history = sorted(snaps.values(), key=lambda x: x.get("date", ""))[-5:]
             print("[M10 SB] Fallback history len={}".format(len(history)), flush=True)
             if history:
                 last = history[-1]
@@ -2236,6 +2328,63 @@ def m12_etf_valuation():
 
 
 # ===== M13: Nasdaq Trend (近5日纳斯达克收盘走势) =====
+def _backfill_nasdaq_from_yahoo(snap_file, min_days=5):
+    """从 Yahoo Finance 回填纳斯达克 K-line 数据（当快照不足时调用）"""
+    try:
+        url = ("https://query1.finance.yahoo.com/v8/finance/chart/%5EIXIC?"
+               "range={}d&interval=1d").format(min_days + 2)
+        raw = http_get(url, timeout=12)
+        chart = json.loads(raw).get("chart", {}).get("result", [])
+        if not chart:
+            return
+        quotes = chart[0].get("indicators", {}).get("quote", [{}])[0]
+        timestamps = chart[0].get("timestamp", [])
+        if not timestamps:
+            return
+
+        snaps = []
+        if os.path.exists(snap_file):
+            try:
+                with open(snap_file) as f:
+                    snaps = json.load(f)
+            except Exception:
+                pass
+
+        existing_dates = {s.get("date", "") for s in snaps}
+        backfilled = 0
+        for i, ts in enumerate(timestamps):
+            dt = datetime.fromtimestamp(ts)
+            date_str = dt.strftime("%Y-%m-%d")
+            if date_str in existing_dates:
+                continue
+            o = safe_float(quotes.get("open", [None])[i], None)
+            c = safe_float(quotes.get("close", [None])[i], None)
+            h = safe_float(quotes.get("high", [None])[i], None)
+            l = safe_float(quotes.get("low", [None])[i], None)
+            if not all(v is not None and v > 0 for v in [o, c, h, l]):
+                continue
+            prev_close = snaps[-1]["close"] if snaps else o
+            chg_pct = round((c - prev_close) / prev_close * 100, 2) if prev_close > 0 else 0.0
+            snaps.append({
+                "date": date_str, "open": o, "close": c,
+                "high": h, "low": l, "prev_close": prev_close, "chg_pct": chg_pct,
+            })
+            existing_dates.add(date_str)
+            backfilled += 1
+
+        if backfilled > 0:
+            snaps.sort(key=lambda s: s.get("date", ""))
+            snaps = snaps[-10:]
+            try:
+                with open(snap_file, "w", encoding="utf-8") as f:
+                    json.dump(snaps, f, ensure_ascii=False)
+                print("[Backfill] Nasdaq {} days from Yahoo Finance".format(backfilled), flush=True)
+            except Exception:
+                pass
+    except Exception as e:
+        print("[Backfill] Yahoo Finance Nasdaq fallback failed: {}".format(e), flush=True)
+
+
 def m13_nasdaq_trend():
     """纳斯达克综合指数（IXIC）近5个交易日走势
     数据获取策略：腾讯 qt.gtimg.cn HTTP接口（us.IXIC）获取当日快照，
@@ -2252,6 +2401,16 @@ def m13_nasdaq_trend():
                 snaps = json.load(f)
         except Exception:
             snaps = []
+
+    # ---- 快照不足时从 Yahoo Finance 回填 ----
+    if len(snaps) < 5:
+        _backfill_nasdaq_from_yahoo(NASDAQ_SNAPS, min_days=5)
+        if os.path.exists(NASDAQ_SNAPS):
+            try:
+                with open(NASDAQ_SNAPS, "r", encoding="utf-8") as f:
+                    snaps = json.load(f)
+            except Exception:
+                pass
 
     # ---- 获取当日最新数据 ----
     today_snap = None
