@@ -1,0 +1,1916 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>市场情绪 - 5日趋势</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg: #0d1117; --bg2: #161b22; --bg3: #21262d;
+  --border: #30363d; --text: #e6edf3; --text2: #8b949e;
+  --up: #ff6b6b; --down: #26de81; --gold: #f7b731;
+  --blue: #4ecdc4; --purple: #a29bfe; --orange: #fd9644;
+  --cyan: #45aaf2;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: 'PingFang SC','Microsoft YaHei',system-ui,sans-serif;
+}
+.header {
+  background: linear-gradient(135deg,#1a1f2e,#161b22 50%,#0d1117);
+  border-bottom:1px solid var(--border); padding:20px 24px;
+  display:flex; align-items:center; justify-content:space-between;
+  flex-wrap:wrap; gap:12px;
+}
+.header h1 { font-size:20px; }
+.header h1 span { color:var(--gold); }
+.hdr-right { display:flex; align-items:center; gap:10px; font-size:12px; color:var(--text2); }
+.btn {
+  padding:6px 14px; border-radius:6px; border:1px solid var(--border);
+  background:var(--bg3); color:var(--text); cursor:pointer; font-size:12px;
+  text-decoration:none; display:inline-flex; align-items:center; gap:6px;
+}
+.btn:hover { border-color:var(--gold); color:var(--gold); }
+.container { max-width:1200px; margin:0 auto; padding:20px; }
+
+.charts-grid {
+  display:grid; grid-template-columns:repeat(3,1fr); gap:16px;
+}
+@media(max-width:1000px) { .charts-grid { grid-template-columns:1fr; } }
+
+.card {
+  background:var(--bg2); border:1px solid var(--border); border-radius:12px;
+  overflow:hidden;
+}
+.card-head {
+  padding:14px 18px; border-bottom:1px solid var(--border);
+  display:flex; align-items:center; justify-content:space-between;
+}
+.card-head h3 { font-size:14px; }
+.card-head .sub { font-size:11px; color:var(--text2); }
+.card-body { padding:12px 8px; min-height:260px; position:relative; }
+.card-body canvas { width:100% !important; height:260px !important; }
+#sectorOutCanvas { height:185px !important; }  /* 流出Top5：5条，比流入Top10矮 */
+.card-err { display:flex; align-items:center; justify-content:center; height:260px; color:var(--down); font-size:13px; flex-direction:column; gap:8px; }
+
+.card-anno {
+  border-top:1px solid var(--border); padding:10px 14px;
+  font-size:11px; line-height:1.6; color:var(--text2);
+}
+.card-anno .anno-icon { color:var(--cyan); margin-right:4px; }
+.card-anno .anno-bull { color:var(--up); }
+.card-anno .anno-bear { color:var(--down); }
+.card-anno .anno-warn { color:var(--gold); }
+
+.loading { text-align:center; padding:80px 0; color:var(--text2); }
+.spinner {
+  width:36px; height:36px; border:3px solid var(--border);
+  border-top-color:var(--gold); border-radius:50%;
+  animation:spin 0.8s linear infinite; margin:0 auto 12px;
+}
+@keyframes spin { to{transform:rotate(360deg)} }
+.err-msg { text-align:center; padding:60px 0; color:var(--down); }
+
+.status-bar {
+  display:flex; flex-wrap:wrap; gap:10px; margin-bottom:20px;
+}
+.st-chip {
+  background:var(--bg2); border:1px solid var(--border);
+  border-radius:8px; padding:8px 14px; font-size:12px;
+  display:flex; align-items:center; gap:8px;
+}
+.st-chip .dot {
+  width:8px; height:8px; border-radius:50%;
+}
+.st-chip.ok .dot { background:var(--up); box-shadow:0 0 4px var(--up); }
+.st-chip.err .dot { background:var(--down); }
+
+
+/* ── 板块资金净流入（独立展示区） ── */
+.sector-flow-section { margin-top: 24px; }
+.sector-flow-card {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
+  overflow: hidden;
+}
+.sector-flow-head {
+  padding: 14px 20px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 8px;
+}
+.sf-title { font-size: 15px; font-weight: 700; }
+.sf-sub { font-size: 11px; color: var(--text2); }
+.sf-stale {
+  font-size: 11px; color: #f0a020; background: rgba(240,160,32,0.12);
+  padding: 2px 8px; border-radius: 4px; font-weight: 600;
+}
+.sector-flow-body { padding: 16px 20px; }
+.sector-flow-body canvas { width: 100% !important; height: 220px !important; }
+
+/* ── 情绪综合研判卡片 ── */
+
+.judge-section { margin-top: 24px; }
+.judge-card {
+  background: linear-gradient(135deg, #1a1f2e 0%, #161b22 50%, #0d1117 100%);
+  border: 2px solid var(--border); border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 4px 32px rgba(0,0,0,0.3);
+}
+.judge-head {
+  background: linear-gradient(135deg, rgba(162,155,254,0.12), rgba(69,170,242,0.08));
+  border-bottom: 1px solid var(--border);
+  padding: 14px 20px;
+  display: flex; align-items: center; gap: 10px;
+}
+.judge-icon { font-size: 24px; }
+.judge-title { font-size: 16px; font-weight: 700; color: var(--purple); letter-spacing: 0.5px; }
+.judge-badge {
+  margin-left: auto;
+  padding: 4px 14px; border-radius: 20px; font-size: 13px; font-weight: 700;
+}
+.judge-badge.extreme_bullish, .judge-badge.bullish { background: rgba(38,222,129,0.15); color: var(--up); border: 1px solid var(--up); }
+.judge-badge.slightly_bullish { background: rgba(247,183,49,0.15); color: var(--gold); border: 1px solid var(--gold); }
+.judge-badge.neutral { background: rgba(139,148,158,0.15); color: var(--text2); border: 1px solid var(--text2); }
+.judge-badge.slightly_bearish { background: rgba(253,150,68,0.15); color: var(--orange); border: 1px solid var(--orange); }
+.judge-badge.bearish, .judge-badge.extreme_bearish { background: rgba(255,107,107,0.15); color: var(--up); border: 1px solid var(--up); }
+
+.judge-body { padding: 20px 24px; }
+.judge-main { display: flex; align-items: center; gap: 24px; margin-bottom: 20px; flex-wrap: wrap; }
+.judge-score-circle {
+  width: 90px; height: 90px; border-radius: 50%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  border: 4px solid var(--border);
+  background: var(--bg3);
+}
+.judge-score-num { font-size: 32px; font-weight: 900; line-height: 1; color: var(--text); }
+.judge-score-max { font-size: 11px; color: var(--text2); margin-top: 2px; }
+.judge-verdict { flex: 1; font-size: 14px; line-height: 1.7; color: var(--text); min-width: 200px; }
+
+.judge-details {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+}
+.judge-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 10px; border-radius: 8px;
+  background: var(--bg3); font-size: 12px; gap: 8px;
+}
+.judge-item-label { color: var(--text2); white-space: nowrap; }
+.judge-item-value { font-weight: 600; white-space: nowrap; }
+.judge-item-bar {
+  flex: 1; height: 4px; border-radius: 2px; background: var(--border);
+  overflow: hidden; min-width: 40px;
+}
+.judge-item-bar-fill { height: 100%; border-radius: 2px; transition: width 0.6s ease; }
+
+/* ── AI 预测卡片 ── */
+.predict-section { margin-top: 28px; }
+.predict-card {
+  background: linear-gradient(135deg, #1a1f2e 0%, #161b22 50%, #0d1117 100%);
+  border: 2px solid var(--border); border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 4px 32px rgba(0,0,0,0.3);
+}
+.predict-head {
+  background: linear-gradient(135deg, rgba(247,183,49,0.12), rgba(78,205,196,0.08));
+  border-bottom: 1px solid var(--border);
+  padding: 18px 24px;
+  display: flex; align-items: center; gap: 14px;
+  flex-wrap: wrap;
+}
+.predict-head-icon {
+  font-size: 32px; flex-shrink: 0;
+  animation: predictPulse 2s ease-in-out infinite;
+}
+@keyframes predictPulse {
+  0%,100% { transform: scale(1); }
+  50% { transform: scale(1.12); }
+}
+.predict-head-info { flex: 1; }
+.predict-head-title {
+  font-size: 18px; font-weight: 700; color: var(--gold);
+  letter-spacing: 0.5px;
+}
+.predict-head-meta {
+  font-size: 11px; color: var(--text2); margin-top: 2px;
+}
+.direction-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;
+}
+.direction-badge.bullish { background: rgba(38,222,129,0.12); color: var(--up); }
+.direction-badge.bearish { background: rgba(255,107,107,0.12); color: var(--down); }
+.direction-badge.neutral { background: rgba(247,183,49,0.12); color: var(--gold); }
+
+.predict-body {
+  padding: 20px 24px;
+  line-height: 1.8; font-size: 14px; color: var(--text);
+  white-space: pre-wrap; word-break: break-word;
+}
+.predict-loading { text-align: center; padding: 40px; color: var(--text2); }
+
+/* ── 反馈区 ── */
+.feedback-section {
+  border-top: 1px solid var(--border);
+  padding: 18px 24px;
+  background: rgba(0,0,0,0.15);
+}
+.feedback-title {
+  font-size: 13px; color: var(--text2); margin-bottom: 12px;
+  display: flex; align-items: center; gap: 6px;
+}
+.feedback-btns {
+  display: flex; gap: 12px; margin-bottom: 12px;
+}
+.fb-btn {
+  padding: 10px 24px; border-radius: 10px; border: 1.5px solid var(--border);
+  background: var(--bg2); color: var(--text); cursor: pointer;
+  font-size: 14px; font-weight: 600;
+  display: flex; align-items: center; gap: 8px;
+  transition: all 0.2s;
+}
+.fb-btn:hover { transform: translateY(-1px); }
+.fb-btn.agree { border-color: rgba(38,222,129,0.4); }
+.fb-btn.agree:hover { background: rgba(38,222,129,0.1); border-color: var(--up); color: var(--up); }
+.fb-btn.agree.selected { background: rgba(38,222,129,0.2); border-color: var(--up); color: var(--up); }
+.fb-btn.disagree { border-color: rgba(255,107,107,0.4); }
+.fb-btn.disagree:hover { background: rgba(255,107,107,0.1); border-color: var(--down); color: var(--down); }
+.fb-btn.disagree.selected { background: rgba(255,107,107,0.2); border-color: var(--down); color: var(--down); }
+
+.feedback-comment {
+  width: 100%; min-height: 72px; padding: 12px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  color: var(--text); font-size: 13px; font-family: inherit;
+  resize: vertical; outline: none; margin-bottom: 12px;
+}
+.feedback-comment:focus { border-color: var(--gold); }
+.feedback-comment::placeholder { color: var(--text2); }
+
+.fb-submit {
+  padding: 10px 32px; border-radius: 10px; border: none;
+  background: linear-gradient(135deg, var(--gold), #e5a61e);
+  color: #0d1117; cursor: pointer; font-size: 14px; font-weight: 700;
+  transition: all 0.2s;
+}
+.fb-submit:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(247,183,49,0.3); }
+.fb-submit:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+.fb-result { font-size: 12px; margin-top: 8px; }
+.fb-result.ok { color: var(--up); }
+.fb-result.err { color: var(--down); }
+
+/* ── 我的反馈历史（时间线） ── */
+.my-feedback-section {
+  margin-top: 20px; border-top: 1px solid var(--border);
+  padding: 18px 24px;
+}
+.my-fb-title {
+  font-size: 14px; font-weight: 700; margin-bottom: 10px;
+}
+.my-fb-item {
+  background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px 16px; margin-bottom: 8px;
+}
+.my-fb-item-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.my-fb-dir { display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.my-fb-dir.bullish { background: rgba(255,107,107,0.15); color: var(--up); }
+.my-fb-dir.bearish { background: rgba(38,222,129,0.15); color: var(--down); }
+.my-fb-dir.neutral { background: rgba(139,148,158,0.15); color: var(--text2); }
+.my-fb-agree { font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+.my-fb-agree.yes { background: rgba(38,222,129,0.15); color: var(--down); }
+.my-fb-agree.no { background: rgba(255,107,107,0.15); color: var(--up); }
+.my-fb-pred { font-size: 12px; line-height: 1.6; color: var(--text); cursor: pointer; }
+.my-fb-comment {
+  margin-top: 8px; padding: 8px 12px; background: rgba(250,237,218,0.15);
+  border-left: 3px solid var(--gold); border-radius: 0 6px 6px 0;
+  font-size: 12px; color: var(--text2); line-height: 1.5;
+}
+.my-fb-empty { color: var(--text2); font-size: 12px; padding: 12px; background:rgba(0,0,0,0.15); border-radius:8px; text-align:center; }
+
+/* 时间线容器 */
+.fb-timeline { display:flex; flex-direction:column; gap:0; }
+.fb-date-group { margin-bottom:16px; }
+.fb-date-header {
+  font-size:11px; font-weight:700; color:var(--accent); margin-bottom:8px;
+  padding:3px 0; border-bottom:1px solid rgba(139,148,158,0.15);
+  display:flex; align-items:center; gap:6px;
+}
+.fb-date-header .fb-date-badge {
+  font-size:9px; padding:1px 5px; border-radius:4px; background:rgba(139,148,158,0.15); color:var(--text2); font-weight:600;
+}
+.fb-date-header.is-today { color:#f7b731; }
+.fb-date-header.is-today .fb-date-badge { background:rgba(247,183,49,0.15); color:#f7b731; }
+
+/* 每条反馈项 */
+.fb-item {
+  background: rgba(0,0,0,0.2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 14px; margin-bottom:6px;
+  font-size:12px; line-height:1.55; cursor:default;
+  transition: border-color 0.15s;
+}
+.fb-item:hover { border-color: rgba(139,148,158,0.35); }
+.fb-item.is-current { border-color: rgba(247,183,49,0.4); background:rgba(247,183,49,0.04); }
+.fb-item-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.fb-dir-badge { font-weight:600; font-size:11px; padding:1px 6px; border-radius:4px; }
+.fb-dir-badge.bullish { background:rgba(255,107,107,0.12); color:#ff6b6b; }
+.fb-dir-badge.bearish { background:rgba(38,222,129,0.10); color:#26de81; }
+.fb-dir-badge.neutral { background:rgba(78,205,196,0.12); color:#4ecdc4; }
+.fb-agree-tag { font-weight:600; font-size:11px; }
+.fb-agree-tag.yes { color:#ff6b6b; }
+.fb-agree-tag.no { color:#26de81; }
+.fb-predict-text { color: var(--text2); margin-top:4px; font-size:11.5px;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; line-height:1.5;
+}
+.fb-predict-text:hover { -webkit-line-clamp: unset; cursor:pointer; }
+.fb-meta-row { font-size:10px; color:var(--text-tertiary); margin-top:5px; display:flex; gap:10px; flex-wrap:wrap; }
+.fb-comment-text { font-size:11px; color:var(--gold); margin-top:5px; padding:5px 8px; background:rgba(247,183,49,0.06); border-radius:4px; border-left:2px solid var(--gold); }
+.fb-action-btn {
+  font-size:10px; padding:2px 8px; border-radius:4px; border:1px solid rgba(139,148,158,0.25);
+  background:transparent; color:var(--text2); cursor:pointer; margin-top:5px;
+  transition:all 0.15s;
+}
+.fb-action-btn:hover { border-color:var(--accent); color:var(--accent); background:rgba(139,148,158,0.08); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div><h1>📊 <span>情绪</span> · 5日趋势仪表盘</h1></div>
+  <div class="hdr-right">
+    <span id="ts">加载中...</span>
+    <span id="td" style="color:var(--accent);font-weight:600;margin-left:12px;"></span>
+    <button class="btn" onclick="location.reload()">🔄 刷新</button>
+  </div>
+</div>
+
+<div class="container">
+  <div class="charts-grid" id="grid">
+    <div class="loading" id="loadingEl">
+      <div class="spinner"></div>
+      <div>获取5日趋势数据...</div>
+      <div style="font-size:11px">ifzq + push2delay</div>
+    </div>
+    <div class="err-msg" id="errEl" style="display:none">
+      <div style="font-size:28px">⚠️</div>
+      <div id="errTxt"></div>
+      <button class="btn" onclick="location.reload()" style="margin-top:10px">重试</button>
+    </div>
+  </div>
+</div>
+
+<!-- 板块资金净流入（独立展示） -->
+<div class="container sector-flow-section" id="sectorFlowSection" style="display:none">
+  <div class="sector-flow-card">
+    <div class="sector-flow-head">
+      <span class="sf-title">🏭 板块资金 · 净流入</span>
+      <span class="sf-stale" id="sectorFlowStale" style="display:none"></span>
+      <span class="sf-sub" id="sectorFlowSub"></span>
+    </div>
+    <div class="sector-flow-body" id="sectorFlowBody">
+      <div class="loading"><div class="spinner"></div><div>加载板块资金数据...</div></div>
+    </div>
+    <div class="card-anno" id="sectorFlowAnno" style="display:none"></div>
+  </div>
+</div>
+
+<!-- 情绪综合研判（规则引擎） -->
+<div class="container judge-section" id="judgeSection" style="display:none">
+  <div class="judge-card">
+    <div class="judge-head">
+      <span class="judge-icon">🧠</span>
+      <span class="judge-title">情绪综合研判</span>
+      <span class="judge-badge" id="judgeBadge"></span>
+    </div>
+    <div class="judge-body">
+      <div class="judge-main">
+        <div class="judge-score-circle" id="judgeCircle">
+          <span class="judge-score-num" id="judgeScoreNum">--</span>
+          <span class="judge-score-max">/10</span>
+        </div>
+        <div class="judge-verdict" id="judgeVerdict"></div>
+      </div>
+      <div class="judge-details" id="judgeDetails"></div>
+    </div>
+  </div>
+</div>
+
+<!-- AI预测 + 用户反馈 -->
+<div class="container predict-section" id="predictSection" style="display:none">
+  <div class="predict-card">
+    <div class="predict-head">
+      <span class="predict-head-icon">🤖</span>
+      <div class="predict-head-info">
+        <div class="predict-head-title" id="predictTitle">AI 市场走势预测</div>
+        <div class="predict-head-meta" id="predictMeta"></div>
+      </div>
+      <span class="direction-badge" id="directionBadge" style="display:none"></span>
+    </div>
+    <div class="predict-body" id="predictBody">
+      <div class="predict-loading"><div class="spinner"></div><div style="margin-top:8px">AI 正在分析近5日走势数据...</div></div>
+    </div>
+    <div class="feedback-section" id="feedbackSection" style="display:none">
+      <div class="feedback-title">💬 这个预测准确吗？你的反馈将帮助AI持续优化</div>
+      <div class="feedback-btns">
+        <button class="fb-btn agree" id="btnAgree" onclick="selectFeedback(true)">👍 认可</button>
+        <button class="fb-btn disagree" id="btnDisagree" onclick="selectFeedback(false)">👎 不认可</button>
+      </div>
+      <textarea class="feedback-comment" id="fbComment" placeholder="说说你的看法（选填，例如：预测理由不充分 / 忽略了某个因素...）"></textarea>
+      <button class="fb-submit" id="btnSubmit" onclick="submitFeedback()" disabled>提交反馈</button>
+      <div class="fb-result" id="fbResult"></div>
+    </div>
+    <div class="my-feedback-section" id="myFeedbackSection" style="display:none">
+      <div class="my-fb-title">📋 我的反馈</div>
+      <div id="myFeedbackList"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const C = {
+  up:'#ff6b6b', down:'#26de81', gold:'#f7b731',
+  blue:'#4ecdc4', purple:'#a29bfe', orange:'#fd9644',
+  text:'#8b949e', grid:'rgba(139,148,158,0.12)',
+};
+let charts = [];
+
+function sdate(d) { return d ? d.slice(5) : ''; }
+
+async function init() {
+  _userId = getOrCreateUserId();
+  try {
+    const r = await fetch('/api/sentiment/v2');
+    const d = await r.json();
+    document.getElementById('loadingEl').style.display = 'none';
+    if (d.error) throw new Error(d.error);
+    document.getElementById('ts').textContent = d.timestamp || '-';
+    var tdEl = document.getElementById('td');
+    if (d.trade_date) {
+      tdEl.textContent = '📅 数据日期: ' + d.trade_date;
+      tdEl.title = '数据对应的交易日（非系统时间）';
+    }
+    // 非交易日提示（周末/节假日）
+    if (d.trading_day === false) {
+      var hdrRight = document.querySelector('.hdr-right');
+      if (hdrRight && !document.getElementById('ntWarn')) {
+        var w = document.createElement('span');
+        w.id = 'ntWarn';
+        w.style.cssText = 'font-size:11px;color:#f7b731;background:rgba(247,183,49,0.12);padding:2px 8px;border-radius:4px;';
+        w.textContent = '⚠️ 非交易日';
+        hdrRight.appendChild(w);
+      }
+    }
+    renderVol(d.modules.sh_volume);
+    renderMarketVolume(d.modules.sh_volume);
+    renderVolDev(d.modules.volume_dev);
+    renderSearch(d.modules.search_index);
+    renderCapitalFlow(d.modules.capital_flow || {});  // M3 上证主力资金流向
+    renderAdr(d.modules.adr || {});                   // M4 涨跌家数 ADR
+    renderLimits(d.modules.limits || {});             // M5 涨停跌停统计
+    renderNorthbound(d.modules.northbound || {});
+    renderSectorFlow(d.modules.sector_flow || {});
+    renderSouthbound(d.modules.southbound || {});
+    renderBreadth(d.modules.breadth || {});
+    renderTFResonance(d.modules.tf_resonance || {});
+    renderETFVal(d.modules.etf_val || {});
+    renderNasdaq(d.modules.nasdaq_trend || {});
+    // 情绪综合研判（规则引擎，展示在AI预测上方）
+    renderJudgment(d);
+    // 异步加载AI预测（不阻塞图表渲染）
+    fetchPrediction();
+  } catch(e) {
+    document.getElementById('loadingEl').style.display = 'none';
+    document.getElementById('errEl').style.display = 'block';
+    document.getElementById('errTxt').textContent = e.message;
+  }
+}
+
+
+function amt2str(v) {
+  if (v >= 10000) return (v/10000).toFixed(2)+'万亿';
+  return v.toFixed(0)+'亿元';
+}
+
+// 安全渲染卡片错误信息（避免 XSS）
+function renderCardError(card, mod, msg) {
+  msg = msg || '数据获取失败';
+  card.querySelector('.card-body').innerHTML = '<div class="card-err">' + msg + '<div class="card-err-detail" style="font-size:11px;color:var(--text2)"></div></div>';
+  card.querySelector('.card-err-detail').textContent = ((mod||{}).error||'');
+}
+
+function renderVol(mod) {
+  var anno = '<span class="anno-icon">💡</span> 沪深两市近5交易日K线图（OHLC），红柱为阳线（收盘≥开盘）、绿柱为阴线（收盘＜开盘）。'
+    + '<br><span class="anno-bull">阳线</span> = 多头占优，买方力量强；'
+    + '<span class="anno-bear">阴线</span> = 空头占优，抛压较重。'
+    + '<br>上影线长 = 冲高回落；下影线长 = 探底回升。';
+  var card = mkCard('M1','📈 上证指数近5日K线','OHLC', anno, (mod||{}).source||'');
+  if (!mod.success || !mod.data || !mod.data.length) {
+    renderCardError(card, mod, '数据获取失败');
+    document.getElementById('grid').appendChild(card);
+    return;
+  }
+  var container = card.querySelector('.card-body');
+  container.innerHTML = '';
+  var canvas = document.createElement('canvas');
+  canvas.style.width = '100%';
+  canvas.style.height = '260px';
+  container.appendChild(canvas);
+
+  // ★ 先挂到 grid 让浏览器布局，否则 canvas.offsetWidth = 0
+  document.getElementById('grid').appendChild(card);
+
+  var dpr = window.devicePixelRatio || 1;
+  var rect = canvas.getBoundingClientRect();
+  var w = rect.width, h = 260;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  var ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  var data = mod.data;
+  // 计算价格区间
+  var allHigh = data.map(function(d){return d.high;});
+  var allLow  = data.map(function(d){return d.low;});
+  var maxP = Math.max.apply(null, allHigh);
+  var minP = Math.min.apply(null, allLow);
+  var pad = (maxP - minP) * 0.12 || maxP * 0.01;
+  maxP += pad; minP -= pad;
+  var range = maxP - minP || 1;
+
+  var margin = {top:20, right:55, bottom:30, left:10};
+  var plotW = w - margin.left - margin.right;
+  var plotH = h - margin.top - margin.bottom;
+  var n = data.length;
+  var barW = Math.max(4, (plotW / n) * 0.6);
+  var gap  = plotW / n;
+
+  function yOf(price) { return margin.top + plotH - (price - minP) / range * plotH; }
+  function drawPriceAxis() {
+    ctx.strokeStyle = C.text; ctx.lineWidth = 0.5; ctx.font = '10px sans-serif'; ctx.fillStyle = C.text;
+    var steps = 5;
+    for (var i = 0; i <= steps; i++) {
+      var p = minP + range * i / steps;
+      var y = yOf(p);
+      ctx.beginPath(); ctx.moveTo(w - margin.right, y); ctx.lineTo(w - margin.right + 4, y); ctx.stroke();
+      ctx.fillText(p.toFixed(2), w - margin.right + 6, y + 3);
+    }
+  }
+  function drawDateAxis() {
+    ctx.fillStyle = C.text; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+    data.forEach(function(d, i) {
+      var x = margin.left + gap * i + gap / 2;
+      ctx.fillText(sdate(d.date), x, h - 6);
+    });
+  }
+
+  // 背景网格
+  ctx.strokeStyle = C.grid; ctx.lineWidth = 0.5;
+  for (var i = 0; i <= 5; i++) {
+    var y = margin.top + plotH * i / 5;
+    ctx.beginPath(); ctx.moveTo(margin.left, y); ctx.lineTo(w - margin.right, y); ctx.stroke();
+  }
+
+  // 绘制K线
+  data.forEach(function(d, i) {
+    var x     = margin.left + gap * i + gap / 2;
+    var open  = d.open, close = d.close, high = d.high, low = d.low;
+    var isUp  = close >= open;
+    var color = isUp ? C.up : C.down;
+
+    // 上下影线
+    ctx.strokeStyle = color; ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, yOf(high));
+    ctx.lineTo(x, yOf(low));
+    ctx.stroke();
+
+    // 实体
+    var bodyTop    = yOf(Math.max(open, close));
+    var bodyBottom = yOf(Math.min(open, close));
+    var bodyH      = Math.max(1, bodyBottom - bodyTop);
+    ctx.fillStyle = color;
+    // 阳线空心，阴线实心（A股风格）
+    if (isUp) {
+      ctx.strokeStyle = color; ctx.lineWidth = 1;
+      ctx.strokeRect(x - barW/2, bodyTop, barW, bodyH);
+    } else {
+      ctx.fillRect(x - barW/2, bodyTop, barW, bodyH);
+    }
+  });
+
+  drawPriceAxis();
+  drawDateAxis();
+
+  // 子类标注最新价格
+  var last = data[data.length - 1];
+  var lastColor = last.close >= last.open ? C.up : C.down;
+  var subEl = card.querySelector('.sub');
+  subEl.innerHTML = '最新 <b style="color:' + lastColor + '">' + last.close.toFixed(2) + '</b>';
+}
+
+function renderSearch(mod) {
+  var anno = '<span class="anno-icon">💡</span> 全市场个股人气值（东方财富 f165 字段）聚合，反映散户主动搜索/关注热度。'
+    + '<br>热度<span class="anno-bull">持续上升</span> = 散户情绪升温，追涨意愿强；'
+    + '热度<span class="anno-bear">持续下降</span> = 市场关注度下降，散户离场观望。'
+    + '<br><span class="anno-warn">⚠ 极端高值（&gt;10）</span>可能预示散户过热，需警惕短期回调风险。'
+  var card = mkCard('M2','🔍 搜索人气指数','f165聚合热度', anno, (mod||{}).source||'');
+  if (!mod.success) {
+    card.querySelector('.card-body').innerHTML = '<div class="card-err">API错误</div>';
+    document.getElementById('grid').appendChild(card);
+    return;
+  }
+  if (!mod.data.length) {
+    card.querySelector('.card-body').innerHTML = '<div class="card-err">暂无数据</div>';
+    document.getElementById('grid').appendChild(card);
+    return;
+  }
+  // 先挂到 grid 让浏览器布局，否则 canvas 尺寸为 0
+  document.getElementById('grid').appendChild(card);
+  var dates = mod.data.map(function(d){return sdate(d.date);});
+  var heats = mod.data.map(function(d){return d.avg_heat;});
+  var ctx = card.querySelector('canvas').getContext('2d');
+  var c = new Chart(ctx, {
+    type:'line',
+    data:{
+      labels:dates,
+      datasets:[{
+        label:'平均热度', data:heats,
+        borderColor:C.purple, backgroundColor:'rgba(162,155,254,0.08)',
+        fill:true, tension:0.3, pointRadius:5,
+        pointBackgroundColor:C.purple, borderWidth:2,
+      }]
+    },
+    options: mkOpts('热度', function(v){return v.toFixed(1);}),
+  });
+  charts.push(c);
+}
+
+// ===== M3: 上证主力资金流向（近5日） =====
+function renderCapitalFlow(mod) {
+  var anno = '<span class="anno-icon">💡</span> 上证指数近5日主力资金流向（超大单+大单为主力）。'
+    + '<br><span class="anno-bull">主力净流入 &gt; 0</span> = 机构/大资金入场；'
+    + '<span class="anno-bear">主力净流入 &lt; 0</span> = 机构资金撤离。'
+    + '<br>散户净流入 = 中单+小单，与主力方向相反时为典型分歧信号。';
+  var card = mkCard('M3', '💹 主力资金流向 · 近5日', '上证 超大单+大单 vs 散户', anno, (mod||{}).source||'');
+  document.getElementById('grid').appendChild(card);
+  if (!mod || !mod.success || !mod.data || !mod.data.length) {
+    renderCardError(card, mod, '数据获取失败');
+    return;
+  }
+  var data = mod.data;
+  var dates = data.map(function(d){ return sdate(d.date); });
+  var mainNet = data.map(function(d){ return d.main_net_yi; });
+  var retailNet = data.map(function(d){ return d.retail_net_yi; });
+  var mainColors = mainNet.map(function(v){ return v >= 0 ? 'rgba(255,107,107,0.55)' : 'rgba(38,222,129,0.45)'; });
+  var mainBorders = mainNet.map(function(v){ return v >= 0 ? '#ff6b6b' : '#26de81'; });
+  // 散户方向相反（买入为负时代表主力卖出时散户接盘）
+  var retailColors = retailNet.map(function(v){ return v >= 0 ? 'rgba(255,197,66,0.45)' : 'rgba(120,120,180,0.35)'; });
+  var retailBorders = retailNet.map(function(v){ return v >= 0 ? '#ffc542' : '#a2b5cd'; });
+
+  // 副标题：最新一日主力净流入
+  var last = data[data.length - 1];
+  var lastMain = last.main_net_yi;
+  var tColor = lastMain >= 0 ? 'var(--up)' : 'var(--down)';
+  card.querySelector('.sub').innerHTML = '最新主力 <b style="color:' + tColor + '">'
+    + (lastMain >= 0 ? '+' : '') + lastMain.toFixed(2) + '亿</b>';
+
+  var ctx = card.querySelector('canvas').getContext('2d');
+  var c = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: dates,
+      datasets: [
+        { label: '主力净流入(亿)', data: mainNet, backgroundColor: mainColors, borderColor: mainBorders, borderWidth: 1, borderRadius: 3, order: 1 },
+        { label: '散户净流入(亿)', data: retailNet, backgroundColor: retailColors, borderColor: retailBorders, borderWidth: 1, borderRadius: 3, order: 2 },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: true, position: 'top', labels: { color: C.text, font: { size: 11 }, boxWidth: 12 } },
+        tooltip: { backgroundColor: 'rgba(22,27,34,0.95)', titleColor: C.text, bodyColor: C.text, borderColor: C.border, borderWidth: 1 }
+      },
+      scales: {
+        x: { ticks: { color: C.text, font: { size: 11 } }, grid: { color: C.grid } },
+        y: { ticks: { color: C.text, font: { size: 11 }, callback: function(v){ return (v>=0?'+':'')+v+'亿'; } }, grid: { color: C.grid } },
+      },
+    },
+  });
+  charts.push(c);
+}
+
+function renderAdr(mod) {
+  var anno = '<span class="anno-icon">💡</span> 全市场涨跌家数分布，全量约5500只A股。最近5日分组柱状图。'
+    + '<br><span class="anno-bull">ADR &gt; 1.5</span> = 多头占优（普涨行情）；'
+    + '<span class="anno-bear">ADR &lt; 0.5</span> = 空头主导（普跌行情）。'
+    + '<br>ADR = 上涨家数 / 下跌家数，1.0 为涨跌均衡。';
+  var card = mkCard('M4','📈 涨跌家数分布 (ADR) · 5日','上涨 / 下跌 / 平盘', anno, (mod||{}).source||'');
+  if (!mod.success) {
+    renderCardError(card, mod, '数据获取失败');
+    document.getElementById('grid').appendChild(card);
+    return;
+  }
+  var hist = mod.history;
+  var d = mod.data;
+  // 先挂到 grid 让浏览器布局
+  document.getElementById('grid').appendChild(card);
+  var ctx = card.querySelector('canvas').getContext('2d');
+
+  if (hist && hist.length >= 2) {
+    // 5日分组柱状图
+    var dates = hist.map(function(h){return sdate(h.date);});
+    var ups = hist.map(function(h){return h.up;});
+    var downs = hist.map(function(h){return h.down;});
+    var flats = hist.map(function(h){return h.flat;});
+    var c = new Chart(ctx, {
+      type:'bar',
+      data:{
+        labels: dates,
+        datasets: [
+          { label:'上涨', data:ups, backgroundColor:'rgba(255,107,107,0.5)', borderColor:'#ff6b6b', borderWidth:1, borderRadius:3 },
+          { label:'下跌', data:downs, backgroundColor:'rgba(38,222,129,0.4)', borderColor:'#26de81', borderWidth:1, borderRadius:3 },
+          { label:'平盘', data:flats, backgroundColor:'rgba(139,148,158,0.2)', borderColor:'#8b949e', borderWidth:1, borderRadius:3 },
+        ]
+      },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        plugins:{
+          legend:{ labels:{ color:C.text, usePointStyle:true, padding:12, font:{size:10} } },
+          tooltip:{ backgroundColor:'rgba(22,27,34,0.95)', titleColor:C.text, bodyColor:C.text, borderColor:C.border, borderWidth:1 }
+        },
+        scales:{
+          x:{ ticks:{ color:C.text, font:{size:9} }, grid:{ color:C.grid } },
+          y:{ title:{ display:true, text:'家数', color:C.text }, ticks:{ color:C.text }, grid:{ color:C.grid } },
+        },
+      },
+    });
+    charts.push(c);
+    var last = hist[hist.length - 1];
+    var subEl = card.querySelector('.sub');
+    subEl.innerHTML = '今日 ADR = <b style=\"color:'+(last.adr>=1?'var(--up)':'var(--down)')+'\">'+last.adr+'</b>';
+  } else {
+    // 回退：单日柱状图
+    var c = new Chart(ctx, {
+      type:'bar',
+      data:{
+        labels:['上涨','下跌','平盘'],
+        datasets:[{
+          label:'家数', data:[d.up, d.down, d.flat],
+          backgroundColor:['rgba(255,107,107,0.5)','rgba(38,222,129,0.4)','rgba(139,148,158,0.25)'],
+          borderColor:['#ff6b6b','#26de81','#8b949e'],
+          borderWidth:1, borderRadius:4,
+        }]
+      },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{display:false}, tooltip:{ backgroundColor:'rgba(22,27,34,0.95)', titleColor:C.text, bodyColor:C.text, borderColor:C.border, borderWidth:1 } },
+        scales:{
+          x:{ ticks:{ color:C.text, font:{size:11} }, grid:{ color:C.grid } },
+          y:{ title:{ display:true, text:'家数', color:C.text }, ticks:{ color:C.text }, grid:{ color:C.grid } },
+        },
+      },
+    });
+    charts.push(c);
+    var subEl = card.querySelector('.sub');
+    subEl.innerHTML = 'ADR = <b style=\"color:'+(d.adr>=1?'var(--up)':'var(--down)')+'\">'+d.adr+'</b> · 样本'+d.sample_size+'只';
+  }
+}
+
+function renderLimits(mod) {
+  var anno = '<span class="anno-icon">💡</span> 涨停/跌停家数（全市场约5500只A股），最近5日分组柱状图。'
+    + '<br><span class="anno-bull">涨停潮 (&ge;100家)</span> = 市场极度亢奋，追高风险大；'
+    + '<span class="anno-bear">跌停潮 (&ge;100家)</span> = 恐慌蔓延，超跌反弹概率增大。'
+    + '<br>主板10%涨跌停 / 科创+创业板20%涨跌停，已区分板块阈值。'
+    + '<br>涨跌停比 &gt; 3 为极度看多，&lt; 0.33 为极度看空。';
+  var card = mkCard('M5','🚦 涨停/跌停统计 · 5日','涨停 / 跌停 (家)', anno, (mod||{}).source||'');
+  if (!mod.success) {
+    renderCardError(card, mod, '数据获取失败');
+    document.getElementById('grid').appendChild(card);
+    return;
+  }
+  var hist = mod.history;
+  var d = mod.data;
+  // 先挂到 grid 让浏览器布局
+  document.getElementById('grid').appendChild(card);
+  var ctx = card.querySelector('canvas').getContext('2d');
+
+  if (hist && hist.length >= 2) {
+    var dates = hist.map(function(h){return sdate(h.date);});
+    var lups = hist.map(function(h){return h.limit_up;});
+    var ldowns = hist.map(function(h){return h.limit_down;});
+    var c = new Chart(ctx, {
+      type:'bar',
+      data:{
+        labels: dates,
+        datasets: [
+          { label:'涨停', data:lups, backgroundColor:'rgba(255,107,107,0.5)', borderColor:'#ff6b6b', borderWidth:1, borderRadius:3 },
+          { label:'跌停', data:ldowns, backgroundColor:'rgba(38,222,129,0.4)', borderColor:'#26de81', borderWidth:1, borderRadius:3 },
+        ]
+      },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        plugins:{
+          legend:{ labels:{ color:C.text, usePointStyle:true, padding:12, font:{size:10} } },
+          tooltip:{ backgroundColor:'rgba(22,27,34,0.95)', titleColor:C.text, bodyColor:C.text, borderColor:C.border, borderWidth:1 }
+        },
+        scales:{
+          x:{ ticks:{ color:C.text, font:{size:9} }, grid:{ color:C.grid } },
+          y:{ title:{ display:true, text:'家数', color:C.text }, ticks:{ color:C.text }, grid:{ color:C.grid } },
+        },
+      },
+    });
+    charts.push(c);
+    var last = hist[hist.length - 1];
+    var subEl = card.querySelector('.sub');
+    subEl.innerHTML = '今日 比 <b>'+last.ratio+'</b>';
+  } else {
+    var c = new Chart(ctx, {
+      type:'bar',
+      data:{
+        labels:['涨停','跌停'],
+        datasets:[{
+          label:'家数', data:[d.limit_up, d.limit_down],
+          backgroundColor:['rgba(255,107,107,0.5)','rgba(38,222,129,0.4)'],
+          borderColor:['#ff6b6b','#26de81'],
+          borderWidth:1, borderRadius:4,
+        }]
+      },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{display:false}, tooltip:{ backgroundColor:'rgba(22,27,34,0.95)', titleColor:C.text, bodyColor:C.text, borderColor:C.border, borderWidth:1 } },
+        scales:{
+          x:{ ticks:{ color:C.text, font:{size:11} }, grid:{ color:C.grid } },
+          y:{ title:{ display:true, text:'家数', color:C.text }, ticks:{ color:C.text }, grid:{ color:C.grid } },
+        },
+      },
+    });
+    charts.push(c);
+    var subEl = card.querySelector('.sub');
+    var ratio = d.limit_up / Math.max(d.limit_down, 1);
+    subEl.innerHTML = '比 <b>'+d.ratio.toFixed(1)+'</b> · '+d.status;
+  }
+}
+
+// ── 沪深两市成交额柱状图 ──
+function renderMarketVolume(mod) {
+  var anno = '<span class="anno-icon">💡</span> 沪深两市（上证+深证）全市场近5个交易日成交额。'
+    + '<br><span class="anno-bull">放量上涨</span> = 增量资金入场，做多意愿强；'
+    + '<span class="anno-bear">放量下跌</span> = 恐慌抛售，资金出逃。'
+    + '<br>缩量 = 市场观望情绪浓，方向待明确。';
+  var card = mkCard('M7','💰 两市成交额 · 5日','成交额 (亿元)', anno, (mod||{}).source||'');
+  if (!mod.success || !mod.data || !mod.data.length) {
+    renderCardError(card, mod, '数据获取失败');
+    document.getElementById('grid').appendChild(card);
+    return;
+  }
+  var data = mod.data;
+  var dates = data.map(function(d){return sdate(d.date);});
+  var amounts = data.map(function(d){return d.amount_yi;});
+  // 柱子颜色：涨（红系）/ 跌（绿系） × 放量（深色）/ 缩量（浅色）
+  var bgColors = data.map(function(d, i){
+    var priceUp = d.close >= d.open;
+    var volUp = i === 0 ? false : d.amount_yi > data[i-1].amount_yi;
+    if (priceUp) {
+      return volUp ? 'rgba(255,107,107,0.65)' : 'rgba(255,107,107,0.25)';  // 放量涨深红 / 缩量涨浅红
+    } else {
+      return volUp ? 'rgba(38,222,129,0.55)' : 'rgba(38,222,129,0.2)';     // 放量跌深绿 / 缩量跌浅绿
+    }
+  });
+  var bdColors = data.map(function(d, i){
+    var priceUp = d.close >= d.open;
+    var volUp = i === 0 ? false : d.amount_yi > data[i-1].amount_yi;
+    if (priceUp) {
+      return volUp ? '#ff6b6b' : '#f4a4a4';
+    } else {
+      return volUp ? '#26de81' : '#80d4a8';
+    }
+  });
+  // 预计算涨跌+量能标签给 tooltip
+  var volLabels = data.map(function(d, i){
+    var priceUp = d.close >= d.open;
+    var volUp = i === 0 ? false : d.amount_yi > data[i-1].amount_yi;
+    var priceTag = priceUp ? '📈上涨' : '📉下跌';
+    var volTag = i === 0 ? '' : (volUp ? '· 放量' : '· 缩量');
+    return priceTag + volTag;
+  });
+
+  // 先挂到 grid 让浏览器布局
+  document.getElementById('grid').appendChild(card);
+  var ctx = card.querySelector('canvas').getContext('2d');
+  var c = new Chart(ctx, {
+    type:'bar',
+    data:{
+      labels: dates,
+      datasets:[{
+        label:'成交额 (亿元)', data:amounts,
+        backgroundColor: bgColors, borderColor: bdColors,
+        borderWidth:1, borderRadius:4,
+      }]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          backgroundColor:'rgba(22,27,34,0.95)', titleColor:C.text, bodyColor:C.text,
+          borderColor:C.border, borderWidth:1,
+          callbacks:{ label: function(ctx){
+              var idx = ctx.dataIndex;
+              var label = (idx >= 0 && idx < volLabels.length) ? volLabels[idx] : '';
+              return amt2str(ctx.raw) + '  ' + label;
+            } }
+        }
+      },
+      scales:{
+        x:{ ticks:{ color:C.text, font:{size:9} }, grid:{ color:C.grid } },
+        y:{
+          title:{ display:true, text:'亿元', color:C.text },
+          ticks:{ color:C.text, callback:function(v){ return amt2str(v); } },
+          grid:{ color:C.grid },
+        },
+      },
+    },
+  });
+  charts.push(c);
+
+  var last = data[data.length - 1];
+  var prev = data.length >= 2 ? data[data.length - 2] : null;
+  var lastColor = last.close >= last.open ? 'var(--up)' : 'var(--down)';
+  var volDir = prev ? (last.amount_yi > prev.amount_yi ? '📈放量' : '📉缩量') : '';
+  var subEl = card.querySelector('.sub');
+  subEl.innerHTML = '最新 <b style="color:' + lastColor + '">' + amt2str(last.amount_yi) + '</b> ' + volDir;
+}
+
+function renderVolDev(mod) {
+  var anno = '<span class="anno-icon">💡</span> 沪深两市今日成交额与近20日均值对比，最近5日偏离度趋势。'
+    + '<br><span class="anno-bull">放量 &gt; 40%</span> = 增量资金入场，市场活跃度提升；'
+    + '<span class="anno-bear">缩量 &lt; -35%</span> = 交投清淡，市场观望情绪浓。'
+    + '<br>正常偏离范围 -15% ~ +15%，偏离越大信号越强。';
+  var card = mkCard('M6','💰 成交额偏离度 · 5日','偏离度 % (今日 vs 20日均值)', anno, (mod||{}).source||'');
+  if (!mod.success) {
+    renderCardError(card, mod, '数据获取失败');
+    document.getElementById('grid').appendChild(card);
+    return;
+  }
+  var hist = mod.history;
+  var d = mod.data;
+  // 先挂到 grid 让浏览器布局
+  document.getElementById('grid').appendChild(card);
+  var ctx = card.querySelector('canvas').getContext('2d');
+
+  if (hist && hist.length >= 2) {
+    var dates = hist.map(function(h){return sdate(h.date);});
+    var devs = hist.map(function(h){return h.deviation_pct;});
+    var bgColors = devs.map(function(v){return v>=0?'rgba(255,107,107,0.4)':'rgba(38,222,129,0.35)';});
+    var bdColors = devs.map(function(v){return v>=0?'#ff6b6b':'#26de81';});
+    var c = new Chart(ctx, {
+      type:'bar',
+      data:{
+        labels: dates,
+        datasets:[{
+          label:'偏离度 %', data:devs,
+          backgroundColor: bgColors, borderColor: bdColors,
+          borderWidth:1, borderRadius:4,
+        }]
+      },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        plugins:{
+          legend:{display:false},
+          tooltip:{
+            backgroundColor:'rgba(22,27,34,0.95)', titleColor:C.text, bodyColor:C.text,
+            borderColor:C.border, borderWidth:1,
+            callbacks: { label: function(ctx){ return ctx.raw>=0 ? '+'+ctx.raw+'%' : ctx.raw+'%'; } }
+          }
+        },
+        scales:{
+          x:{ ticks:{ color:C.text, font:{size:9} }, grid:{ color:C.grid } },
+          y:{
+            title:{ display:true, text:'%', color:C.text },
+            ticks:{ color:C.text, callback:function(v){return (v>=0?'+':'')+v+'%';} },
+            grid:{ color:C.grid },
+          },
+        },
+      },
+    });
+    charts.push(c);
+    var last = hist[hist.length - 1];
+    var dev = last.deviation_pct;
+    var devColor = dev > 15 ? 'var(--up)' : dev < -15 ? 'var(--down)' : 'var(--gold)';
+    var devSign = dev >= 0 ? '+' : '';
+    var subEl = card.querySelector('.sub');
+    subEl.innerHTML = '今日偏离 <b style=\"color:'+devColor+'\">'+devSign+dev+'%</b>';
+  } else {
+    var dev = d.deviation_pct;
+    var c = new Chart(ctx, {
+      type:'bar',
+      data:{
+        labels:['今日成交额','20日均值'],
+        datasets:[{
+          label:'亿元', data:[d.today_amount, d.avg20_amount],
+          backgroundColor:['rgba(69,170,242,0.5)','rgba(139,148,158,0.25)'],
+          borderColor:['#45aaf2','#8b949e'],
+          borderWidth:1, borderRadius:4,
+        }]
+      },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{display:false}, tooltip:{ backgroundColor:'rgba(22,27,34,0.95)', titleColor:C.text, bodyColor:C.text, borderColor:C.border, borderWidth:1 } },
+        scales:{
+          x:{ ticks:{ color:C.text, font:{size:11} }, grid:{ color:C.grid } },
+          y:{ title:{ display:true, text:'亿元', color:C.text }, ticks:{ color:C.text }, grid:{ color:C.grid } },
+        },
+      },
+    });
+    charts.push(c);
+    var devColor = dev > 15 ? 'var(--up)' : dev < -15 ? 'var(--down)' : 'var(--gold)';
+    var devSign = dev >= 0 ? '+' : '';
+    var subEl = card.querySelector('.sub');
+    subEl.innerHTML = '偏离 <b style=\"color:'+devColor+'\">'+devSign+dev+'%</b> · '+d.status;
+  }
+}
+
+// ── 北向资金净买入 5日柱状图 ──
+function renderNorthbound(mod) {
+  var anno = '<span class="anno-icon">💡</span> 北向资金（沪股通+深股通）近5日净买入额，反映外资/机构对A股的态度。'
+    + '<br><span class="anno-bull">净流入（正值）</span> = 外资做多情绪强，看好A股；'
+    + '<span class="anno-bear">净流出（负值）</span> = 外资撤退，谨慎信号。'
+    + '<br>单日 ±30亿为正常波动，持续同向流动3日以上具有趋势意义。';
+  var card = mkCard('M8','🌐 北向资金 · 5日','沪股通+深股通净买入(亿元)', anno, (mod||{}).source||'');
+  if (!mod || !mod.success || !mod.history || !mod.history.length) {
+    renderCardError(card, mod, '北向资金数据暂不可用');
+    document.getElementById('grid').appendChild(card);
+    return;
+  }
+  var hist = mod.history;
+  var data = mod.data || {};
+  document.getElementById('grid').appendChild(card);
+  var ctx = card.querySelector('canvas').getContext('2d');
+
+  var dates  = hist.map(function(h){ return sdate(h.date); });
+  var totals = hist.map(function(h){ return h.total_yi; });
+  var bgColors = totals.map(function(v){ return v >= 0 ? 'rgba(255,107,107,0.45)' : 'rgba(38,222,129,0.35)'; });
+  var bdColors = totals.map(function(v){ return v >= 0 ? '#ff6b6b' : '#26de81'; });
+
+  var c = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: dates,
+      datasets: [
+        {
+          label: '沪股通(亿)', data: hist.map(function(h){ return h.sh_net_yi; }),
+          backgroundColor: 'rgba(255,107,107,0.25)', borderColor: '#ff6b6b',
+          borderWidth: 1, borderRadius: 2, stack: 'nb',
+        },
+        {
+          label: '深股通(亿)', data: hist.map(function(h){ return h.sz_net_yi; }),
+          backgroundColor: 'rgba(69,170,242,0.3)', borderColor: '#45aaf2',
+          borderWidth: 1, borderRadius: 2, stack: 'nb',
+        },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: true, position: 'top', labels: { color: C.text, font: { size: 10 }, boxWidth: 12 } },
+        tooltip: {
+          backgroundColor: 'rgba(22,27,34,0.95)', titleColor: C.text, bodyColor: C.text,
+          borderColor: C.border, borderWidth: 1,
+          callbacks: {
+            label: function(ctx){ return ctx.dataset.label + ': ' + (ctx.raw >= 0 ? '+' : '') + ctx.raw.toFixed(1) + '亿'; }
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { color: C.text, font: { size: 9 } }, grid: { color: C.grid }, stacked: true },
+        y: {
+          title: { display: true, text: '亿元', color: C.text },
+          ticks: { color: C.text, callback: function(v){ return (v >= 0 ? '+' : '') + v + '亿'; } },
+          grid: { color: C.grid },
+          stacked: true,
+        },
+      },
+    },
+  });
+  charts.push(c);
+
+  var last = hist[hist.length - 1];
+  var t = last.total_yi;
+  var tColor = t >= 10 ? 'var(--up)' : t <= -10 ? 'var(--down)' : 'var(--gold)';
+  var subEl = card.querySelector('.sub');
+  subEl.innerHTML = '最新合计 <b style="color:' + tColor + '">' + (t >= 0 ? '+' : '') + t.toFixed(1) + '亿</b> · ' + (data.status || '');
+}
+
+// ── M8: 板块资金净流入（独立全宽卡片，位于综合研判前）──
+function renderSectorFlow(mod) {
+  var section = document.getElementById('sectorFlowSection');
+  var bodyEl = document.getElementById('sectorFlowBody');
+  var subEl = document.getElementById('sectorFlowSub');
+  var staleEl = document.getElementById('sectorFlowStale');
+  var annoEl = document.getElementById('sectorFlowAnno');
+
+  // 过期数据标记
+  if (mod && mod.is_stale) {
+    if (mod.fallback_mode === 'snap') {
+      staleEl.textContent = '⚠️ 昨日数据';
+    } else if (mod.fallback_mode === 'pct_chg') {
+      staleEl.textContent = '⚠️ 按涨跌幅排序';
+    } else {
+      staleEl.textContent = '⚠️ 数据更新中';
+    }
+    staleEl.style.display = '';
+  } else {
+    staleEl.style.display = 'none';
+  }
+
+  // 注释说明
+  if (mod && mod.is_stale && mod.fallback_mode === 'pct_chg') {
+    annoEl.innerHTML = '<span class="anno-icon">⚠️</span> 资金流数据暂不可用，当前按板块涨跌幅绝对值排序。'
+      + '<br>资金流数据通常盘中逐步更新，请稍后刷新查看。';
+  } else if (mod && mod.is_stale && mod.fallback_mode === 'snap') {
+    annoEl.innerHTML = '<span class="anno-icon">⚠️</span> 今日资金流数据尚未更新，以下为昨日数据。'
+      + '<br><span class="anno-bull">主力净流入</span> = 超大单+大单买入；<span class="anno-bear">主力净流出</span> = 机构撤退。'
+      + '<br>板块轮动是A股的核心特征，连续多日同一板块流入 = 主线确认。';
+  } else {
+    annoEl.innerHTML = '<span class="anno-icon">💡</span> 行业板块主力资金净流入 Top 10 + 近5日趋势，反映资金轮动方向。'
+      + '<br><span class="anno-bull">主力净流入</span> = 超大单+大单买入；<span class="anno-bear">主力净流出</span> = 机构撤退。'
+      + '<br>板块轮动是A股的核心特征，连续多日同一板块流入 = 主线确认。';
+  }
+  annoEl.style.display = '';
+
+  if (!mod || !mod.success || !mod.data || !mod.data.length) {
+    bodyEl.innerHTML = '<div class="card-err"><div style="font-size:28px">📭</div><div>板块资金数据暂不可用</div><div style="font-size:11px;color:var(--text2)">'+((mod||{}).error||'')+'</div></div>';
+    section.style.display = '';
+    return;
+  }
+
+  var sectors = mod.data.slice(0, 10);
+  var outSectors = (mod.out_data || []).slice(0, 5);
+  var hist = mod.history || [];
+  var hotSectors = mod.hot_sectors || [];
+  var total = mod.total_net_yi || 0;
+  var tColor = total >= 0 ? 'var(--up)' : 'var(--down)';
+
+  subEl.innerHTML = '流入Top10 <b style="color:' + tColor + '">' + (total >= 0 ? '+' : '') + total.toFixed(1) + '亿</b>'
+    + (hist.length >= 2 ? ' <span style="color:var(--text-tertiary);font-weight:400;font-size:10px;">· ' + hist.length + '日趋势</span>' : '');
+
+  // ===== 流入 Top10 + 流出 Top5：并排布局 =====
+  bodyEl.innerHTML =
+    '<div style="display:flex;gap:12px;align-items:flex-start;">'
+    + '<div style="flex:3;min-width:0;">'
+    +   '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px;font-weight:600;">🔴 主力流入 Top10</div>'
+    +   '<div style="position:relative;"><canvas id="sectorCanvas"></canvas></div>'
+    + '</div>'
+    + (outSectors.length
+      ? '<div style="flex:2;min-width:0;">'
+        +   '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px;font-weight:600;">🟢 主力流出 Top5</div>'
+        +   '<div style="position:relative;"><canvas id="sectorOutCanvas"></canvas></div>'
+        + '</div>'
+      : '')
+    + '</div>';
+
+  // --- 流入 Top10 柱状图 ---
+  var names = sectors.map(function(s){ return s.name.length > 6 ? s.name.slice(0,6)+'..' : s.name; });
+  var flows = sectors.map(function(s){ return s.main_net_yi; });
+  var bgColors = flows.map(function(v){ return v >= 0 ? 'rgba(255,107,107,0.45)' : 'rgba(38,222,129,0.35)'; });
+  var bdColors = flows.map(function(v){ return v >= 0 ? '#ff6b6b' : '#26de81'; });
+
+  var ctx = document.getElementById('sectorCanvas').getContext('2d');
+  var c = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: names,
+      datasets: [{ label: '主力净流入(亿)', data: flows, backgroundColor: bgColors, borderColor: bdColors, borderWidth: 1, borderRadius: 3 }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { backgroundColor: 'rgba(22,27,34,0.95)', titleColor: C.text, bodyColor: C.text, borderColor: C.border, borderWidth: 1 } },
+      scales: {
+        x: { ticks: { color: C.text, font: { size: 11 }, callback: function(v){ return (v>=0?'+':'')+v+'亿'; } }, grid: { color: C.grid } },
+        y: { ticks: { color: C.text, font: { size: 11 } }, grid: { color: C.grid } },
+      },
+    },
+  });
+  charts.push(c);
+
+  // --- 流出 Top5 柱状图 ---
+  if (outSectors.length) {
+    var outNames = outSectors.map(function(s){ return s.name.length > 6 ? s.name.slice(0,6)+'..' : s.name; });
+    var outFlows = outSectors.map(function(s){ return s.main_net_yi; });
+    var ctx2 = document.getElementById('sectorOutCanvas').getContext('2d');
+    var c2 = new Chart(ctx2, {
+      type: 'bar',
+      data: {
+        labels: outNames,
+        datasets: [{ label: '主力净流出(亿)', data: outFlows,
+          backgroundColor: 'rgba(38,222,129,0.35)', borderColor: '#26de81', borderWidth: 1, borderRadius: 3 }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { backgroundColor: 'rgba(22,27,34,0.95)', titleColor: C.text, bodyColor: C.text, borderColor: C.border, borderWidth: 1 } },
+        scales: {
+          x: { ticks: { color: C.text, font: { size: 11 }, callback: function(v){ return v+'亿'; } }, grid: { color: C.grid } },
+          y: { ticks: { color: C.text, font: { size: 11 } }, grid: { color: C.grid } },
+        },
+      },
+    });
+    charts.push(c2);
+  }
+
+  // ===== 下半区：5日趋势对比 =====
+  if (hist.length >= 2) {
+    var maxVal = 1;
+    hist.forEach(function(h){ maxVal = Math.max(maxVal, Math.abs(h.total_net_yi)); });
+
+    var trendHtml = '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">';
+    trendHtml += '<div style="display:flex;gap:20px;align-items:flex-start;">';
+
+    // --- 左侧：5日柱状图 ---
+    trendHtml += '<div style="flex:1;min-width:0;">';
+    trendHtml += '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:8px;font-weight:600;">近5日 Top10 合计资金流（亿元）</div>';
+    trendHtml += '<div style="display:flex;align-items:flex-end;gap:6px;height:80px;padding:0 4px;">';
+    hist.forEach(function(h, i){
+        var val = h.total_net_yi;
+        var absVal = Math.abs(val);
+        var barH = Math.max(Math.round(absVal / maxVal * 70), 3);
+        var isLast = (i === hist.length - 1);
+        var bg = val >= 0
+            ? (isLast ? '#ff6b6b' : 'rgba(255,107,107,0.55)')
+            : (isLast ? '#26de81' : 'rgba(38,222,129,0.45)');
+        var justify = val >= 0 ? 'flex-end' : 'flex-start';
+        trendHtml += '<div style="flex:1;display:flex;flex-direction:column;justify-content:'+justify+';align-items:center;min-width:0;">';
+        trendHtml += '<div style="font-size:9px;color:'+(val>=0?'#d63031':'#00b894')+';margin-bottom:2px;white-space:nowrap;">'+(val>=0?'+':'')+val.toFixed(0)+'</div>';
+        trendHtml += '<div style="width:100%;max-width:50px;height:'+barH+'px;background:'+bg+';border-radius:2px 2px 0 0;min-height:3px;"></div>';
+        trendHtml += '<div style="font-size:9px;color:var(--text-tertiary);margin-top:3px;white-space:nowrap;">'+sdate(h.date)+'</div>';
+        trendHtml += '</div>';
+    });
+    trendHtml += '</div></div>'; // end left bars
+
+    // --- 右侧：每日 Top3 标签矩阵 ---
+    trendHtml += '<div style="width:220px;flex-shrink:0;">';
+    trendHtml += '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:8px;font-weight:600;">每日Top3板块</div>';
+    trendHtml += '<div style="display:flex;flex-direction:column;gap:3px;">';
+
+    // 表头日期行
+    trendHtml += '<div style="display:flex;gap:3px;margin-bottom:3px;">';
+    hist.forEach(function(h, i){
+        var isLast = (i === hist.length - 1);
+        trendHtml += '<div style="flex:1;text-align:center;font-size:9px;color:' + (isLast ? 'var(--text-primary)' : 'var(--text-tertiary)') + (isLast ? ';font-weight:700;' : ';') + '">' + sdate(h.date).slice(-2) + '日</div>';
+    });
+    trendHtml += '</div>';
+
+    // 3行标签
+    for (var row = 0; row < 3; row++) {
+        trendHtml += '<div style="display:flex;gap:3px;">';
+        hist.forEach(function(h, i){
+            var isLast = (i === hist.length - 1);
+            var name = (h.top3 && h.top3[row]) || '-';
+            var displayName = name.length > 4 ? name.slice(0,4) : name;
+            var tagBg, tagClr;
+            if (isLast) {
+                tagBg = h.is_positive ? '#ff6b6b' : '#26de81';
+                tagClr = '#fff';
+            } else {
+                if (h.is_positive) { tagBg = 'rgba(255,107,107,0.12)'; tagClr = '#e17055'; }
+                else { tagBg = 'rgba(38,222,129,0.10)'; tagClr = '#00b894'; }
+            }
+            var isHot = false;
+            hotSectors.forEach(function(hs){ if (hs[0] === name) isHot = true; });
+            var bStyle = isHot && !isLast ? 'border:1px solid '+(h.is_positive?'#e17055':'#00b894')+';' : '';
+            trendHtml += '<div style="flex:1;text-align:center;font-size:10px;padding:3px 2px;border-radius:4px;background:'+tagBg+';color:'+tagClr+';'+bStyle+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+name+((h.top3_values&&h.top3_values[row])?' · '+h.top3_values[row]+'亿':'')+'">'+displayName+'</div>';
+        });
+        trendHtml += '</div>';
+    }
+    trendHtml += '</div>'; // end tag matrix
+
+    // 主线信号
+    if (hotSectors.length > 0) {
+        trendHtml += '<div style="margin-top:8px;padding:6px 10px;background:rgba(250,237,218,0.5);border-radius:6px;border:1px solid rgba(181,167,39,0.25);">';
+        trendHtml += '<span style="font-size:11px;color:#854F0B;font-weight:600;">🔥 主线信号:</span> ';
+        hotSectors.forEach(function(hs, i){
+            trendHtml += '<span style="font-size:11px;color:#854F0B;font-weight:700;">'+hs[0]+'</span>';
+            if (i < hotSectors.length - 1) trendHtml += '<span style="color:#854F0B;font-size:10px;">x'+hs[1]+' </span>';
+        });
+        trendHtml += '</div>';
+    }
+
+    trendHtml += '</div>'; // end right tags
+    trendHtml += '</div>'; // end flex container
+    trendHtml += '</div>'; // end outer
+
+    bodyEl.querySelector('div').insertAdjacentHTML('afterend', trendHtml);
+  }
+
+  section.style.display = '';
+}// ── M9: 市场宽度 ──
+function renderBreadth(mod) {
+  var anno = '<span class="anno-icon">💡</span> 市场宽度综合指标：涨跌比、涨停/跌停家数、主力资金流合成评分(0-100)。'
+    + '<br>60+ = 偏乐观，45-60 = 中性，30-45 = 偏悲观，<30 = 极度悲观。'
+    + '<br>宽度的核心价值是确认趋势健康度——指数上涨但宽度收窄 = 背离信号。';
+  var card = mkCard('M9','📊 市场宽度 Breadth','综合情绪评分', anno, (mod||{}).source||'');
+  if (!mod || !mod.success || !mod.data) {
+    renderCardError(card, mod, '市场宽度数据暂不可用');
+    document.getElementById('grid').appendChild(card);
+    return;
+  }
+  var d = mod.data;
+  document.getElementById('grid').appendChild(card);
+
+  var body = card.querySelector('.card-body');
+  body.style.padding = '16px';
+
+  var score = d.score || 50;
+  var scColor = score >= 60 ? '#26de81' : score >= 45 ? '#f7b731' : score >= 30 ? '#fd9644' : '#ff6b6b';
+
+  body.innerHTML =
+    '<div style="display:flex;align-items:center;gap:20px;margin-bottom:16px">' +
+      '<div style="width:80px;height:80px;border-radius:50%;border:4px solid '+scColor+';display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0">' +
+        '<div style="font-size:28px;font-weight:900;color:'+scColor+'">'+score+'</div>' +
+        '<div style="font-size:10px;color:var(--text2)">/100</div>' +
+      '</div>' +
+      '<div style="flex:1">' +
+        '<div style="font-size:16px;font-weight:700;color:'+scColor+';margin-bottom:4px">'+d.label+'</div>' +
+        '<div style="font-size:11px;color:var(--text2);line-height:1.6">涨跌比 '+d.up+'涨/'+d.down+'跌 · 涨占比 '+d.breadth_pct+'%</div>' +
+        '<div style="font-size:11px;color:var(--text2);line-height:1.6">涨停 '+d.limit_up+' · 跌停 '+d.limit_down+' · 主力 '+ (d.main_net_yi >= 0 ? '+' : '') + d.main_net_yi + '亿</div>' +
+      '</div>' +
+    '</div>';
+
+  // 5日历史迷你图
+  var hist = mod.history || [];
+  if (hist.length >= 2) {
+    var miniDiv = document.createElement('div');
+    miniDiv.style.height = '120px';
+    body.appendChild(miniDiv);
+    var miniCtx = document.createElement('canvas');
+    miniDiv.appendChild(miniCtx);
+    var histDates = hist.map(function(h){ return sdate(h.date); });
+    var histPcts = hist.map(function(h){ return h.up_pct; });
+
+    var mc = new Chart(miniCtx, {
+      type: 'line',
+      data: {
+        labels: histDates,
+        datasets: [{ label: '涨占比%', data: histPcts, borderColor: '#4ecdc4', backgroundColor: 'rgba(78,205,196,0.1)', fill: true, tension: 0.3, pointRadius: 3 }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: C.text, font: { size: 9 } }, grid: { color: C.grid } },
+          y: { min: 0, max: 100, ticks: { color: C.text, font: { size: 9 }, callback: function(v){ return v+'%'; } }, grid: { color: C.grid } },
+        },
+      },
+    });
+    charts.push(mc);
+  }
+
+  card.querySelector('.sub').innerHTML = '信号: <b style="color:'+scColor+'">'+d.label+'</b>';
+}
+
+// ── M10: 港股通南向资金 ──
+function renderSouthbound(mod) {
+  var anno = '<span class="anno-icon">💡</span> 港股通南向资金（内地→港股）近5日净买入额，反映内资对港股的态度。'
+    + '<br><span class="anno-bull">南下（正值）</span> = 内资流入港股，可能分流A股资金；'
+    + '<br><span class="anno-bear">回流（负值）</span> = 内资回归A股，利好A股流动性。'
+    + '<br>南北向资金剪刀差(北向-南向) > 50亿 = 外资做多A股意愿强。';
+  var card = mkCard('M10','🇭🇰 南向资金 · 5日','港股通净买入(亿元)', anno, (mod||{}).source||'');
+  if (!mod || !mod.success || !mod.history || !mod.history.length) {
+    renderCardError(card, mod, '南向资金数据暂不可用');
+    document.getElementById('grid').appendChild(card);
+    return;
+  }
+  var hist = mod.history;
+  var data = mod.data || {};
+  document.getElementById('grid').appendChild(card);
+  var ctx = card.querySelector('canvas').getContext('2d');
+
+  var dates  = hist.map(function(h){ return sdate(h.date); });
+  var totals = hist.map(function(h){ return h.total_yi; });
+  var shVals = hist.map(function(h){ return h.sh_net_yi; });
+  var szVals = hist.map(function(h){ return h.sz_net_yi; });
+
+  var c = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: dates,
+      datasets: [
+        { label: '港股通(沪)', data: shVals, backgroundColor: 'rgba(255,107,107,0.25)', borderColor: '#ff6b6b', borderWidth: 1, borderRadius: 2, stack: 'sb' },
+        { label: '港股通(深)', data: szVals, backgroundColor: 'rgba(69,170,242,0.3)', borderColor: '#45aaf2', borderWidth: 1, borderRadius: 2, stack: 'sb' },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: true, position: 'top', labels: { color: C.text, font: { size: 10 }, boxWidth: 12 } },
+        tooltip: { backgroundColor: 'rgba(22,27,34,0.95)', titleColor: C.text, bodyColor: C.text, borderColor: C.border, borderWidth: 1 }
+      },
+      scales: {
+        x: { ticks: { color: C.text, font: { size: 9 } }, grid: { color: C.grid }, stacked: true },
+        y: { title: { display: true, text: '亿元', color: C.text }, ticks: { color: C.text, callback: function(v){ return (v>=0?'+':'')+v+'亿'; } }, grid: { color: C.grid }, stacked: true },
+      },
+    },
+  });
+  charts.push(c);
+
+  var last = hist[hist.length - 1];
+  var t = last.total_yi;
+  var tColor = t >= 10 ? 'var(--up)' : t <= -10 ? 'var(--down)' : 'var(--gold)';
+  card.querySelector('.sub').innerHTML = '最新合计 <b style="color:'+tColor+'">'+(t>=0?'+':'')+t.toFixed(1)+'亿</b> · '+data.status;
+}
+
+// ── M11: 多周期信号共振 ──
+function renderTFResonance(mod) {
+  var anno = '<span class="anno-icon">💡</span> 日线+周线+月线 KDJ/MACD/RSI 三指标共振评级。'
+    + '<br>★★★ 强多 = 三周期同步做多；▼▼▼ 强空 = 三周期同步做空；★ 震荡 = 方向不明朗。'
+    + '<br>日线权重50% + 周线30% + 月线20%，信号越趋于 +3/-3 越可靠。';
+  var card = mkCard('M11','🔄 多周期共振','日线·周线·月线', anno, (mod||{}).source||'');
+  if (!mod || !mod.success || !mod.data) {
+    renderCardError(card, mod, '共振数据暂不可用(pytdx未接入)');
+    document.getElementById('grid').appendChild(card);
+    return;
+  }
+  var d = mod.data;
+  document.getElementById('grid').appendChild(card);
+
+  var body = card.querySelector('.card-body');
+  body.style.padding = '16px';
+
+  var res = d.resonance;
+  var resColor = res >= 2 ? '#26de81' : res >= 1 ? '#4ecdc4' : res >= -1 ? '#f7b731' : res >= -2 ? '#fd9644' : '#ff6b6b';
+
+  body.innerHTML =
+    '<div style="text-align:center;margin-bottom:14px">' +
+      '<div style="font-size:36px;font-weight:900;color:'+resColor+'">'+d.label+'</div>' +
+      '<div style="font-size:11px;color:var(--text2);margin-top:4px">共振值: '+res+'</div>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-size:11px;text-align:center">' +
+      '<div style="background:var(--bg3);border-radius:8px;padding:8px"><div style="color:var(--text2);margin-bottom:2px">日线</div><div style="font-weight:600;color:'+(d.daily.score>=1?'#ff6b6b':d.daily.score<=-1?'#26de81':'#f7b731')+'">RSI:'+d.daily.rsi+' MACD:'+d.daily.macd.toFixed(3)+'</div><div style="color:var(--text2)">K:'+d.daily.k+' D:'+d.daily.d+'</div></div>' +
+      '<div style="background:var(--bg3);border-radius:8px;padding:8px"><div style="color:var(--text2);margin-bottom:2px">周线</div><div style="font-weight:600;color:'+(d.weekly&&d.weekly.score>=1?'#ff6b6b':d.weekly&&d.weekly.score<=-1?'#26de81':'#f7b731')+'">RSI:'+(d.weekly?d.weekly.rsi:'-')+' MACD:'+(d.weekly?d.weekly.macd.toFixed(3):'-')+'</div><div style="color:var(--text2)">K:'+(d.weekly?d.weekly.k:'-')+' D:'+(d.weekly?d.weekly.d:'-')+'</div></div>' +
+      '<div style="background:var(--bg3);border-radius:8px;padding:8px"><div style="color:var(--text2);margin-bottom:2px">月线</div><div style="font-weight:600;color:'+(d.monthly&&d.monthly.score>=1?'#ff6b6b':d.monthly&&d.monthly.score<=-1?'#26de81':'#f7b731')+'">RSI:'+(d.monthly?d.monthly.rsi:'-')+' MACD:'+(d.monthly?d.monthly.macd.toFixed(3):'-')+'</div><div style="color:var(--text2)">K:'+(d.monthly?d.monthly.k:'-')+' D:'+(d.monthly?d.monthly.d:'-')+'</div></div>' +
+    '</div>';
+
+  card.querySelector('.sub').innerHTML = '共振评级: <b style="color:'+resColor+'">'+d.label+'</b>';
+}
+
+// ── M12: ETF 52周温度计 ──
+function renderETFVal(mod) {
+  var anno = '<span class="anno-icon">💡</span> <b>提示：温度计反映"价格位置"，不等同于"估值高低"。</b>'
+    + '<br>🔥 沸点80%+ = 价格接近52周高点（可能是估值偏高，也可能是盈利高增长驱动）；🧊 冰点20%- = 价格接近52周低点。'
+    + '<br>温度计是<b>情境感知工具</b>，不是买卖信号。请结合PE/PB、宏观环境和基本面综合判断。';
+  var card = mkCard('M12','🌡️ ETF温度计 · 52周','价格水位', anno, (mod||{}).source||'');
+  if (!mod || !mod.success || !mod.data || !mod.data.length) {
+    renderCardError(card, mod, 'ETF估值数据暂不可用');
+    document.getElementById('grid').appendChild(card);
+    return;
+  }
+  var data = mod.data;
+  document.getElementById('grid').appendChild(card);
+
+  var body = card.querySelector('.card-body');
+  body.style.padding = '16px';
+  var barsHtml = '';
+
+  for (var i = 0; i < data.length; i++) {
+    var item = data[i];
+    var pct = item.temp_pct || 50;
+    var barColor = pct >= 80 ? '#ff6b6b' : pct >= 65 ? '#fd9644' : pct >= 45 ? '#f7b731' : pct >= 25 ? '#4ecdc4' : '#26de81';
+    var chgStr = (item.chg_pct || 0) >= 0 ? '<span style="color:#ff6b6b">+'+item.chg_pct+'%</span>' : '<span style="color:#26de81">'+item.chg_pct+'%</span>';
+    barsHtml +=
+      '<div style="margin-bottom:10px">' +
+        '<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px">' +
+          '<span style="font-weight:600">'+item.name+'</span>' +
+          '<span>'+item.price+' '+chgStr+'</span>' +
+        '</div>' +
+        '<div style="position:relative;height:8px;background:var(--bg3);border-radius:4px;overflow:hidden">' +
+          '<div style="height:100%;width:'+pct+'%;background:'+barColor+';border-radius:4px;transition:width 0.6s ease"></div>' +
+        '</div>' +
+        '<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text2);margin-top:2px">' +
+          '<span>'+item.week52_low+'</span><span style="color:'+barColor+';font-weight:600">'+pct+'% '+item.label+'</span><span>'+item.week52_high+'</span>' +
+        '</div>' +
+      '</div>';
+  }
+
+  body.innerHTML = barsHtml;
+
+  var summary = mod.summary || {};
+  card.querySelector('.sub').innerHTML = '综合水温: <b style="color:'+(summary.avg_temp>=70?'#ff6b6b':summary.avg_temp>=50?'#f7b731':'#4ecdc4')+'">'+summary.avg_temp+'% · '+summary.mkt_label+'</b>';
+}
+
+// ── M13: 纳斯达克近5日走势图 ──
+function renderNasdaq(mod) {
+  var anno = '<span class="anno-icon">🌐</span> 纳斯达克综合指数（IXIC）近5个交易日收盘走势。'
+    + '<br>美股尤其纳指<b>前一日表现</b>对次日A股科技/成长风格影响显著，供情绪参考。'
+    + '<br>涨跌幅以<b>红涨绿跌</b>（中国习惯）标注。数据来源：东方财富';
+  var card = mkCard('M13', '🌐 纳指走势 · 近5日', '纳斯达克综合指数', anno, (mod||{}).source||'');
+  if (!mod || !mod.success || !mod.data || !mod.data.length) {
+    renderCardError(card, mod, '纳斯达克数据暂不可用');
+    document.getElementById('grid').appendChild(card);
+    return;
+  }
+
+  var data = mod.data;
+  var labels = data.map(function(d) { return d.date ? d.date.slice(5) : ''; });
+  var closes = data.map(function(d) { return d.close; });
+  var chgPcts = data.map(function(d) { return d.chg_pct || 0; });
+
+  // 折线颜色：整体5日趋势决定（起点到终点）
+  var overallUp = closes[closes.length - 1] >= closes[0];
+  var lineColor = overallUp ? '#ff6b6b' : '#26de81'; // 红涨绿跌
+
+  // 每根柱体颜色（涨=红，跌=绿）
+  var barColors = chgPcts.map(function(c) { return c >= 0 ? '#ff6b6b' : '#26de81'; });
+
+  document.getElementById('grid').appendChild(card);
+  // 复用 mkCard 生成的 canvas，不额外新建（避免双 canvas 撑破卡片）
+  var canvas = card.querySelector('.card-body canvas');
+
+  // 底部文字：最新收盘价 + 涨跌
+  var latest = data[data.length - 1];
+  var latestChg = latest.chg_pct || 0;
+  var chgColor = latestChg >= 0 ? '#ff6b6b' : '#26de81';
+  var chgSign = latestChg >= 0 ? '+' : '';
+  card.querySelector('.sub').innerHTML =
+    '最新收盘: <b>' + (latest.close || '--') + '</b>  '
+    + '<span style="color:' + chgColor + '">' + chgSign + latestChg + '% · ' + (mod.trend_label || '') + '</span>';
+
+  var ctx = canvas.getContext('2d');
+  var ch = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          type: 'line',
+          label: '收盘价',
+          data: closes,
+          borderColor: lineColor,
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: 3,
+          pointBackgroundColor: lineColor,
+          tension: 0.3,
+          yAxisID: 'y',
+          order: 1,
+        },
+        {
+          type: 'bar',
+          label: '涨跌幅%',
+          data: chgPcts,
+          backgroundColor: barColors,
+          borderWidth: 0,
+          yAxisID: 'y2',
+          order: 2,
+          barPercentage: 0.5,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(22,27,34,0.95)',
+          titleColor: C.text,
+          bodyColor: C.text,
+          borderColor: C.border,
+          borderWidth: 1,
+          callbacks: {
+            label: function(ctx) {
+              if (ctx.datasetIndex === 0) return '收盘: ' + ctx.parsed.y;
+              var sign = ctx.parsed.y >= 0 ? '+' : '';
+              return '涨跌: ' + sign + ctx.parsed.y.toFixed(2) + '%';
+            }
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { color: C.text, font: { size: 10 } }, grid: { color: C.grid } },
+        y: {
+          position: 'left',
+          ticks: { color: C.text, font: { size: 9 }, callback: function(v) { return v >= 1000 ? (v/1000).toFixed(0)+'k' : v; } },
+          grid: { color: C.grid }
+        },
+        y2: {
+          position: 'right',
+          grid: { display: false },
+          ticks: {
+            color: C.text, font: { size: 9 },
+            callback: function(v) { return (v >= 0 ? '+' : '') + v.toFixed(1) + '%'; }
+          }
+        }
+      }
+    }
+  });
+  charts.push(ch);
+}
+
+function mkOpts(ylabel, cb) {
+  return {
+    responsive:true, maintainAspectRatio:false,
+    plugins:{ legend:{display:false}, tooltip:{ backgroundColor:'rgba(22,27,34,0.95)', titleColor:C.text, bodyColor:C.text, borderColor:C.border, borderWidth:1 } },
+    scales:{
+      x:{ ticks:{ color:C.text, font:{size:10} }, grid:{ color:C.grid } },
+      y:{ title:{ display:true, text:ylabel, color:C.text }, ticks:{ color:C.text, callback:cb }, grid:{ color:C.grid } },
+    },
+  };
+}
+
+function mkCard(id, title, sub, anno, source) {
+  var d = document.createElement('div');
+  d.className = 'card';
+  var srcHtml = source ? '<span class="src" style="font-size:10px;color:var(--text2);background:rgba(139,148,158,0.12);padding:2px 8px;border-radius:4px;margin-left:8px;">'+source+'</span>' : '';
+  d.innerHTML = '<div class="card-head"><h3>'+title+'</h3>'+srcHtml+'<span class="sub">'+sub+'</span></div><div class="card-body"><canvas></canvas></div>' +
+    (anno ? '<div class="card-anno">'+anno+'</div>' : '');
+  return d;
+}
+
+// ===== Cookie 用户ID管理 =====
+function getOrCreateUserId() {
+  var match = document.cookie.match(/(?:^|;\s*)etf_user_id=([^;]*)/);
+  if (match && match[1]) return match[1];
+  // 生成 UUID v4
+  var uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+  // 存入 Cookie，有效期 1 年
+  var d = new Date(); d.setFullYear(d.getFullYear() + 1);
+  document.cookie = 'etf_user_id=' + uuid + '; expires=' + d.toUTCString() + '; path=/; SameSite=Lax';
+  return uuid;
+}
+
+// ===== 情绪综合研判（规则引擎） =====
+function renderJudgment(d) {
+  var j = d.judgment;
+  if (!j || !j.composite) { return; }
+
+  var section = document.getElementById('judgeSection');
+  section.style.display = 'block';
+
+  // 评分圆环颜色
+  var circle = document.getElementById('judgeCircle');
+  var ringColor;
+  if (j.composite >= 6.5) ringColor = 'var(--down)';
+  else if (j.composite >= 4.5) ringColor = 'var(--gold)';
+  else ringColor = 'var(--up)';
+  circle.style.borderColor = ringColor;
+  circle.style.boxShadow = '0 0 16px ' + ringColor.replace('var(','').replace(')','');
+  document.getElementById('judgeScoreNum').textContent = j.composite;
+  document.getElementById('judgeScoreNum').style.color = ringColor;
+
+  // 标签徽章
+  var badge = document.getElementById('judgeBadge');
+  badge.textContent = j.label;
+  badge.className = 'judge-badge ' + (j.category || '');
+
+  // 综合观点
+  document.getElementById('judgeVerdict').textContent = j.verdict;
+
+  // 各指标明细
+  var details = document.getElementById('judgeDetails');
+  var html = '';
+  var order = ['m1_kline', 'm4_adr', 'm5_limits', 'm3_capital', 'm2_search', 'm6_voldev'];
+  for (var i = 0; i < order.length; i++) {
+    var k = order[i];
+    var v = j.scores_detail[k];
+    if (!v) continue;
+    var pct = Math.round(v.score / 10 * 100);
+    var barColor;
+    if (v.score >= 7) barColor = 'var(--down)';
+    else if (v.score >= 5) barColor = 'var(--gold)';
+    else barColor = 'var(--up)';
+    html += '<div class="judge-item">'
+      + '<span class="judge-item-label">' + v.label + '</span>'
+      + '<div class="judge-item-bar"><div class="judge-item-bar-fill" style="width:' + pct + '%;background:' + barColor + '"></div></div>'
+      + '<span class="judge-item-value">' + v.value + '</span>'
+      + '</div>';
+  }
+  details.innerHTML = html;
+}
+
+// ===== AI预测 + 用户反馈 =====
+let _predictionData = null;
+let _feedbackSelected = null;
+let _userId = null;
+
+async function fetchPrediction() {
+  try {
+    const r = await fetch('/api/sentiment/predict');
+    const d = await r.json();
+    if (!d.success) {
+      var el = document.getElementById('predictBody');
+      el.innerHTML = '<div class="predict-loading" style="color:var(--down)">⚠️ AI预测暂时不可用：<span class="err-msg"></span><br><span style="font-size:11px;color:var(--text2)">（可能是LLM API Key未配置，不影响其他功能）</span></div>';
+      el.querySelector('.err-msg').textContent = d.error || '未知错误';
+      document.getElementById('predictSection').style.display = 'block';
+      return;
+    }
+    _predictionData = d;
+    renderPrediction(d);
+    // 检查当前用户是否已有反馈
+    checkMyFeedback(d.prediction_id);
+  } catch(e) {
+    var el = document.getElementById('predictBody');
+    el.innerHTML = '<div class="predict-loading" style="color:var(--down)">⚠️ 预测接口请求失败<br><span style="font-size:11px;color:var(--text2)"></span></div>';
+    el.querySelector('span').textContent = e.message || '';
+    document.getElementById('predictSection').style.display = 'block';
+  }
+}
+
+function checkMyFeedback(predictionId) {
+  if (!predictionId) return;
+  fetch('/api/sentiment/feedback/check?prediction_id=' + predictionId)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.has_feedback) {
+        // 用户已有反馈 → 禁用按钮，显示历史
+        _feedbackSelected = d.agree;
+        document.getElementById('btnAgree').disabled = true;
+        document.getElementById('btnDisagree').disabled = true;
+        document.getElementById('fbComment').disabled = true;
+        document.getElementById('btnSubmit').disabled = true;
+        document.getElementById('btnSubmit').textContent = '已提交';
+        document.getElementById('btnAgree').className = 'fb-btn agree' + (d.agree?' selected':'');
+        document.getElementById('btnDisagree').className = 'fb-btn disagree' + (d.agree?'':' selected');
+        var resultEl = document.getElementById('fbResult');
+        resultEl.className = 'fb-result ok';
+        resultEl.textContent = '✅ 已提交反馈 · ' + (d.agree ? '你认可此预测' : '你不认可此预测');
+      }
+      // 加载反馈历史
+      loadMyFeedbackHistory();
+    });
+}
+
+async function loadMyFeedbackHistory() {
+  try {
+    var r = await fetch('/api/sentiment/feedback/my');
+    var d = await r.json();
+    var el = document.getElementById('myFeedbackList');
+    var sec = document.getElementById('myFeedbackSection');
+
+    // 没有数据 → 隐藏整个区域
+    if (!d.success || !d.data || d.data.length === 0) {
+      sec.style.display = 'none';
+      return;
+    }
+
+    // 只取当天的预测
+    var todayStr = new Date().toISOString().slice(0,10);
+    var todayItems = d.data.filter(function(x) {
+        return (x.predicted_date || '').slice(0,10) === todayStr
+            || (x.created_at || '').slice(0,10) === todayStr;
+    });
+
+    // 当天没有任何预测/反馈 → 隐藏
+    if (todayItems.length === 0) {
+      sec.style.display = 'none';
+      return;
+    }
+
+    // 当天有预测但都没反馈 → 也隐藏（等用户提交后再显示）
+    var hasAnyFb = todayItems.some(function(x){ return x.has_feedback; });
+    if (!hasAnyFb) {
+      sec.style.display = 'none';
+      return;
+    }
+
+    // 当天有反馈 → 展示
+    sec.style.display = 'block';
+    el.innerHTML = '';
+
+    var dirMap = { bullish: { cls:'bullish', txt:'📈 看涨' }, bearish: { cls:'bearish', txt:'📉 看跌' }, neutral: { cls:'neutral', txt:'📊 震荡' } };
+
+    todayItems.forEach(function(item) {
+        if (!item.has_feedback) return;  // 只显示已反馈的
+
+        var dm = dirMap[item.direction] || dirMap.neutral;
+        var div = document.createElement('div');
+        div.className = 'my-fb-item';
+
+        var html = '';
+        html += '<div class="my-fb-item-row">';
+        html += '<span class="my-fb-dir ' + dm.cls + '">' + dm.txt + '</span>';
+        html += '<span class="my-fb-agree ' + (item.agree ? 'yes' : 'no') + '">' + (item.agree ? '👍 认可' : '👎 不认可') + '</span>';
+        html += '</div>';
+
+        var ptext = (item.prediction_text || '(无预测内容)').replace(/\n/g, " ").trim();
+        html += '<div class="my-fb-pred" title="点击展开" style="-webkit-line-clamp:2;display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden;">' + escapeHtml(ptext.substring(0, 300)) + (ptext.length > 300 ? '...' : '') + '</div>';
+
+        if (item.comment && item.comment.trim()) {
+            html += '<div class="my-fb-comment">💬 ' + escapeHtml(item.comment.trim()) + '</div>';
+        }
+
+        div.innerHTML = html;
+        el.appendChild(div);
+
+        // 绑定展开
+        div.querySelector('.my-fb-pred').addEventListener('click', function() {
+            this.style.webkitLineClamp = (this.style.webkitLineClamp === 'unset') ? '2' : 'unset';
+        });
+    });
+
+  } catch(e) {
+    console.error('loadMyFeedbackHistory error:', e);
+    document.getElementById('myFeedbackSection').style.display = 'none';
+  }
+}
+
+
+function escapeHtml(str) {
+  var div = document.createElement('div');
+  div.appendChild(document.createTextNode(str));
+  return div.innerHTML;
+}
+
+function renderPrediction(d) {
+  document.getElementById('predictSection').style.display = 'block';
+  document.getElementById('predictBody').textContent = d.prediction_text || '（无预测内容）';
+
+  // 元信息
+  var meta = '预测日期: <b>' + (d.predicted_date || '-') + '</b> · 模型: ' +
+    (d.llm_model || 'LLM') + (d.from_db ? ' · 数据库' : ' · 实时生成');
+  document.getElementById('predictMeta').innerHTML = meta;
+
+  // 方向徽章
+  var badge = document.getElementById('directionBadge');
+  var dirMap = { bullish: { cls: 'bullish', txt: '📈 看涨' },
+                 bearish: { cls: 'bearish', txt: '📉 看跌' },
+                 neutral: { cls: 'neutral', txt: '📊 震荡' } };
+  var dm = dirMap[d.direction] || dirMap.neutral;
+  badge.className = 'direction-badge ' + dm.cls;
+  badge.textContent = dm.txt;
+  badge.style.display = 'inline-flex';
+
+  // 显示反馈区
+  document.getElementById('feedbackSection').style.display = 'block';
+}
+
+function selectFeedback(agree) {
+  _feedbackSelected = agree;
+  document.getElementById('btnAgree').className = 'fb-btn agree' + (agree === true ? ' selected' : '');
+  document.getElementById('btnDisagree').className = 'fb-btn disagree' + (agree === false ? ' selected' : '');
+  document.getElementById('btnSubmit').disabled = false;
+}
+
+function submitFeedback() {
+  if (_feedbackSelected === null || !_predictionData) return;
+  var comment = document.getElementById('fbComment').value.trim();
+  var btn = document.getElementById('btnSubmit');
+  var resultEl = document.getElementById('fbResult');
+
+  btn.disabled = true;
+  btn.textContent = '提交中...';
+
+  fetch('/api/sentiment/feedback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      prediction_id: _predictionData.prediction_id,
+      agree: _feedbackSelected,
+      comment: comment
+    })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.success) {
+      resultEl.className = 'fb-result ok';
+      resultEl.textContent = '✅ 反馈已提交，感谢你的参与！';
+      // 禁用后续操作
+      document.getElementById('btnAgree').disabled = true;
+      document.getElementById('btnDisagree').disabled = true;
+      document.getElementById('fbComment').disabled = true;
+      btn.textContent = '已提交';
+      // 刷新反馈历史
+      loadMyFeedbackHistory();
+    } else if (data.feedback_id) {
+      // 409: 重复提交
+      resultEl.className = 'fb-result ok';
+      resultEl.textContent = '⚠️ ' + (data.error || '您已提交过反馈');
+      document.getElementById('btnAgree').disabled = true;
+      document.getElementById('btnDisagree').disabled = true;
+      document.getElementById('fbComment').disabled = true;
+      btn.textContent = '已提交';
+    } else {
+      resultEl.className = 'fb-result err';
+      resultEl.textContent = '❌ 提交失败: ' + (data.error || '未知错误');
+      btn.disabled = false;
+      btn.textContent = '提交反馈';
+    }
+  })
+  .catch(function(e) {
+    resultEl.className = 'fb-result err';
+    resultEl.textContent = '❌ 网络错误: ' + e.message;
+    btn.disabled = false;
+    btn.textContent = '提交反馈';
+  });
+}
+
+init();
+</script>
+</body>
+</html>

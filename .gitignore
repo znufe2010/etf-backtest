@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.env
+
+# Project specific
+sentiment_v2_cache/
+etf_backend/__pycache__/
+etf_backend/.env
+
+# WorkBuddy
+.workbuddy/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
