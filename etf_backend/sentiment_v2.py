@@ -1101,79 +1101,17 @@ def m6_volume_dev():
 
 # ===== M7: North-bound Capital Flow 5D (沪深港通北向资金) =====
 def _backfill_nbsb_from_kline(snap_file, save_func, is_northbound=True, min_days=5):
-    """从 push2his K-line API 回填北向/南向资金历史快照（当快照不足时调用）
+    """回填北向/南向资金历史快照（当快照不足时调用）
 
-    数据源: push2his.eastmoney.com/api/qt/kamt.kline/get (klt=101 日线)
-    - is_northbound=True: hk2sh(北向沪) + hk2sz(北向深)
-    - is_northbound=False: sh2hk(港股通沪) + sz2hk(港股通深)
-    字段格式: date,dayNetAmtIn(万元),dayAmtRemain,cumulative
+    注意：push2his kamt.kline 接口的 f52(dayNetAmtIn) 字段是"当日买入规模"（接近额度上限），
+    并非真实净买入（买-卖差）。真实净买入只能从 push2delay kamt 的 netBuyAmt 字段获取。
+    由于历史净买入无法通过单一API批量获取，此函数作为占位符，
+    历史数据通过每日调用 m7_northbound/m10_southbound 逐渐积累。
     """
-    try:
-        url = ("https://push2his.eastmoney.com/api/qt/kamt.kline/get?"
-               "fields1=f1,f2,f3,f4&fields2=f51,f52,f53,f54"
-               "&klt=101&lmt={}&ut=b2884a393a59ad64002292a3e90d46a5").format(min_days)
-        raw = http_get(url, timeout=12)
-        data = json.loads(raw).get("data", {})
-        if not data:
-            return
-
-        if is_northbound:
-            arr1 = data.get("hk2sh", [])
-            arr2 = data.get("hk2sz", [])
-        else:
-            arr1 = data.get("sh2hk", [])
-            arr2 = data.get("sz2hk", [])
-
-        if not arr1 and not arr2:
-            return
-
-        # Build date→net map (万元→亿元, sum of both markets)
-        net_map = {}
-        for arr in [arr1, arr2]:
-            for line in arr:
-                if not isinstance(line, str):
-                    continue
-                parts = line.split(",")
-                if len(parts) < 2:
-                    continue
-                date_str = parts[0].strip()
-                net_wan = safe_float(parts[1], 0)  # 万元
-                net_yi = round(net_wan / 10000, 2)  # 亿元
-                net_map[date_str] = net_map.get(date_str, 0) + net_yi
-
-        # Save back to snapshot file (preserve existing, add new)
-        snaps = {}
-        if os.path.exists(snap_file):
-            try:
-                with open(snap_file) as f:
-                    snaps = json.load(f)
-            except Exception:
-                pass
-
-        backfilled = 0
-        for date_str, net_yi in sorted(net_map.items()):
-            if date_str not in snaps and len(date_str) >= 8:
-                # 即使净额=0也是有效数据（表示当日无净流入/流出）
-                snaps[date_str] = {
-                    "date": date_str,
-                    "sh_net_yi": round(net_yi / 2, 2),   # approximate split
-                    "sz_net_yi": round(net_yi / 2, 2),
-                    "total_yi": net_yi,
-                }
-                backfilled += 1
-
-        if backfilled > 0:
-            keys = sorted(snaps.keys(), reverse=True)
-            snaps = {k: snaps[k] for k in keys[:10]}
-            try:
-                with open(snap_file, "w") as f:
-                    json.dump(snaps, f, ensure_ascii=False)
-                print("[Backfill] {} {} days from push2his K-line".format(
-                    "NB" if is_northbound else "SB", backfilled), flush=True)
-            except Exception:
-                pass
-    except Exception as e:
-        print("[Backfill] push2his fallback failed: {}".format(e), flush=True)
+    # push2his kamt.kline 不提供真实净买入历史，跳过
+    print("[Backfill] {} skipped - no reliable historical net buy API available".format(
+        "NB" if is_northbound else "SB"), flush=True)
+    return
 
 
 def m7_northbound():
@@ -1213,17 +1151,21 @@ def m7_northbound():
 
     out = None
     try:
-        # 拉取今日实时数据（万元单位）；加 fields2 f57 拿 date2 字段
+        # 拉取今日实时数据（万元单位）
+        # fields2 需包含 f59-f64 以获取 buyAmt/sellAmt/netBuyAmt 真实净买入字段
+        # 注意：dayNetAmtIn 字段含义是"今日已买入净额/额度"，与 netBuyAmt 不同
+        #       netBuyAmt = buyAmt - sellAmt，才是真正的净买入(买卖差)
         url = ("https://push2delay.eastmoney.com/api/qt/kamt/get?"
-               "fields1=f1,f2,f3,f4&fields2=f51,f52,f53,f54,f57,f58&klt=101&lmt=5"
-               "&ut=b2884a393a59ad64002292a3e90d46a5")
+               "fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64"
+               "&klt=101&lmt=1&ut=b2884a393a59ad64002292a3e90d46a5")
         raw = http_get(url, timeout=12)
         data = json.loads(raw)
         d = data.get("data", {})
         sh_north = d.get("hk2sh", {})   # 北向沪股通（港资买上海A股）
         sz_north = d.get("hk2sz", {})   # 北向深股通（港资买深圳A股）
-        sh_net_wan = float(sh_north.get("dayNetAmtIn", 0) or 0)  # 万元
-        sz_net_wan = float(sz_north.get("dayNetAmtIn", 0) or 0)  # 万元
+        # 用 netBuyAmt (买-卖差) 作为真实净买入，单位万元
+        sh_net_wan = float(sh_north.get("netBuyAmt", 0) or 0)
+        sz_net_wan = float(sz_north.get("netBuyAmt", 0) or 0)
         sh_net = round(sh_net_wan / 10000, 2)   # 亿元
         sz_net = round(sz_net_wan / 10000, 2)   # 亿元
         total  = round(sh_net + sz_net, 2)
@@ -1870,30 +1812,25 @@ def m10_southbound():
 
     out = None
     try:
-        # 加 fields2 f57/f58 拿 date2 字段
+        # fields2 需包含 f59-f64 以获取 buyAmt/sellAmt/netBuyAmt 真实净买入字段
+        # 注意：dayNetAmtIn 字段含义是"今日港股通买入规模/额度"，不是净买入
+        #       netBuyAmt = buyAmt - sellAmt，才是真正的净买入(买卖差)
         url = ("https://push2delay.eastmoney.com/api/qt/kamt/get?"
-               "fields1=f1,f2,f3,f4&fields2=f52,f53,f54,f55,f57,f58&klt=105&lmt=1"
-               "&ut=b2884a393a59ad64002292a3e90d46a5")
+               "fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64"
+               "&klt=101&lmt=1&ut=b2884a393a59ad64002292a3e90d46a5")
         raw = http_get(url, timeout=12)
-        print("[M10 SB] API raw length: {}, preview: {}".format(
-            len(raw), raw[:200]), flush=True)
         data = json.loads(raw)
         d = data.get("data", {})
-        print("[M10 SB] data keys: {}".format(list(d.keys())), flush=True)
         sh_south = d.get("sh2hk", {})
         sz_south = d.get("sz2hk", {})
-        print("[M10 SB] sh2hk keys: {}, sz2hk keys: {}".format(
-            list(sh_south.keys()), list(sz_south.keys())), flush=True)
-        print("[M10 SB] sh2hk dayNetAmtIn={}, sz2hk dayNetAmtIn={}".format(
-            sh_south.get("dayNetAmtIn"), sz_south.get("dayNetAmtIn")), flush=True)
-        sh_net_wan = float(sh_south.get("dayNetAmtIn", 0) or 0)
-        sz_net_wan = float(sz_south.get("dayNetAmtIn", 0) or 0)
-        print("[M10 SB] sh_net_wan={}, sz_net_wan={}".format(sh_net_wan, sz_net_wan), flush=True)
-        sh_net = round(sh_net_wan / 10000, 2)
-        sz_net = round(sz_net_wan / 10000, 2)
+        # 用 netBuyAmt (买-卖差) 作为真实净买入，单位万元
+        sh_net_wan = float(sh_south.get("netBuyAmt", 0) or 0)
+        sz_net_wan = float(sz_south.get("netBuyAmt", 0) or 0)
         sh_net = round(sh_net_wan / 10000, 2)
         sz_net = round(sz_net_wan / 10000, 2)
         total = round(sh_net + sz_net, 2)
+        print("[M10 SB] netBuyAmt: sh={:.2f}亿, sz={:.2f}亿, total={:.2f}亿".format(
+            sh_net, sz_net, total), flush=True)
 
         snap_date = (sh_south.get("date2") or sz_south.get("date2")
                      or trading_days(1)[-1])
