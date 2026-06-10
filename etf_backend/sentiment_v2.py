@@ -2534,7 +2534,8 @@ def m3_capital_flow():
     if cached:
         return cached
     try:
-        url = (P2D + "/stock/fflow/kline/get?secid=1.000001"
+        # 注意：fflow kline 必须用 push2his（push2delay 返回空 klines）
+        url = ("https://push2his.eastmoney.com/api/qt/stock/fflow/kline/get?secid=1.000001"
                "&fields1=f1,f2,f3,f4&fields2=f51,f52,f53,f54,f55,f56,f57"
                "&lmt=10&klt=101")
         data = json.loads(http_get(url, timeout=10))
@@ -2552,7 +2553,7 @@ def m3_capital_flow():
                     "main_net_yi": round(main_net / 100000000, 2),
                     "retail_net_yi": round(retail_net / 100000000, 2),
                 })
-        out = {"success": len(result) > 0, "data": result, "source": "push2delay fflow + pytdx turnover"}
+        out = {"success": len(result) > 0, "data": result, "source": "push2his fflow + pytdx turnover"}
 
         # === 补充 TDX 两市总成交额（按日期匹配）===
         try:
@@ -2728,6 +2729,8 @@ def _enrich_with_history(result):
             if len(merged) > len(cf_data):
                 result["modules"]["capital_flow"]["data"] = merged
                 result["modules"]["capital_flow"]["source"] += "+DB"
+                # 修复：数据补充后更新 success 标记
+                result["modules"]["capital_flow"]["success"] = True
             # TDX 成交额补充（DB 数据不含此字段，合并后需重新补齐）
             try:
                 tdx_kline = _tdx_get_combined_kline(count=6)
