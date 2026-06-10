@@ -1796,6 +1796,9 @@ def m10_southbound():
 
     def _save_sb_snap(date_str, sh_net, sz_net, total):
         snaps = _load_sb_snaps()
+        print("[M10 SB] _save_sb_snap: date={}, sh_net={}, sz_net={}, total={}".format(
+            date_str, sh_net, sz_net, total), flush=True)
+        print("[M10 SB] _save_sb_snap: existing keys={}".format(list(snaps.keys())), flush=True)
         snaps[date_str] = {
             "date": date_str,
             "sh_net_yi": sh_net, "sz_net_yi": sz_net, "total_yi": total,
@@ -1804,11 +1807,13 @@ def m10_southbound():
         }
         keys = sorted(snaps.keys(), reverse=True)
         snaps = {k: snaps[k] for k in keys[:10]}
+        print("[M10 SB] _save_sb_snap: saving keys={}".format(list(snaps.keys())), flush=True)
         try:
             with open(SNAP_FILE, "w") as f:
                 json.dump(snaps, f, ensure_ascii=False)
-        except Exception:
-            pass
+            print("[M10 SB] _save_sb_snap: file saved successfully", flush=True)
+        except Exception as e:
+            print("[M10 SB] _save_sb_snap: ERROR saving file: {}".format(e), flush=True)
 
     out = None
     try:
@@ -1836,7 +1841,8 @@ def m10_southbound():
                      or trading_days(1)[-1])
         print("[M10 SB] snap_date={}, sh_south.date2={}, sz_south.date2={}".format(
             snap_date, sh_south.get("date2"), sz_south.get("date2")), flush=True)
-        has_data = abs(sh_net_wan) > 0 or abs(sz_net_wan) > 0
+        # 修复：只要有日期字段就保存快照（即使净买入为0，休市日也需记录）
+        has_data = bool(sh_south.get("date2") or sz_south.get("date2"))
         print("[M10 SB] has_data={}, will_save_snap={}".format(has_data, has_data), flush=True)
         if has_data:
             _save_sb_snap(snap_date, sh_net, sz_net, total)
@@ -1844,10 +1850,11 @@ def m10_southbound():
 
         snaps = _load_sb_snaps()
         history = sorted(snaps.values(), key=lambda x: x.get("date", ""))[-5:]
+        # 注意：_backfill_nbsb_from_kline 已废弃（push2his 无真实净买入历史）
+        # 历史数据将通过每日调用自动积累
         if len(history) < 5:
-            _backfill_nbsb_from_kline(SNAP_FILE, None, is_northbound=False, min_days=5)
-            snaps = _load_sb_snaps()
-            history = sorted(snaps.values(), key=lambda x: x.get("date", ""))[-5:]
+            print("[M10 SB] Warning: only {} days in history, need {} more days to reach 5".format(
+                len(history), 5 - len(history)), flush=True)
 
         if total >= 30:       sb_status = "大幅南下"
         elif total >= 10:     sb_status = "净流入港股"
