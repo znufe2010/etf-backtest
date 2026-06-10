@@ -1625,7 +1625,7 @@ def _em_fetch_sector_rankings():
         url = (
             P2D + "/clist/get?pn=1&pz=30&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281"
             "&fltt=2&invt=2&fid=f62&fs=m:90+t:2"
-            "&fields=f2,f3,f4,f12,f14,f62,f66,f104,f105,f128,f140,f141,f136,f152,f184"
+            "&fields=f2,f3,f4,f12,f14,f62,f64,f66,f104,f105,f128,f140,f141,f136,f152,f184"
         )
         raw = http_get(url, timeout=12)
         data = json.loads(raw)
