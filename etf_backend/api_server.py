@@ -735,6 +735,33 @@ ALL_A_STOCKS_FS = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
 API_CLIST = "https://push2.eastmoney.com/api/qt/clist/get"
 API_KLINE_IDX = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
 
+# 指数成分股分类（从 sentiment_v2 引入）
+INDEX_LABELS = ["sz50", "hs300", "zz500", "zz1000", "cyb", "kcb"]
+INDEX_NAMES = {"sz50": "上证50", "hs300": "沪深300", "zz500": "中证500",
+               "zz1000": "中证1000", "cyb": "创业板", "kcb": "科创板"}
+
+def _get_index_classifier():
+    """懒加载指数成分股分类器（从 sentiment_v2 借调）"""
+    try:
+        from sentiment_v2 import _load_index_classifier
+        return _load_index_classifier()
+    except Exception:
+        return None
+
+def _classify_stock_code(code, classifier):
+    """按代码前缀+成分股映射分类到指数"""
+    labels = set()
+    code_clean = code.lstrip("sh").lstrip("sz").lstrip("bj")
+    if code_clean.startswith("30"):
+        labels.add("cyb")
+    if code_clean.startswith("688"):
+        labels.add("kcb")
+    if classifier:
+        for lbl in ["sz50", "hs300", "zz500", "zz1000"]:
+            if code in classifier.get(lbl, set()):
+                labels.add(lbl)
+    return labels
+
 # 全市场A股约数（用于外推涨跌停）
 TOTAL_A_STOCKS = 5500
 
@@ -846,6 +873,10 @@ def _fetch_all_dimensions() -> Dict:
         up = down = flat = 0
         lu = ld = 0
         valid = 0
+        # 指数涨跌停归类统计
+        idx_clf = _get_index_classifier()
+        idx_lu = {lbl: 0 for lbl in INDEX_LABELS}
+        idx_ld = {lbl: 0 for lbl in INDEX_LABELS}
         # 一次拉取全量A股（上证+深证+科创+创业板，约5500只）
         url = (f"{API_CLIST}?pn=1&pz=6000&po=1&np=1&fltt=2&invt=2"
                f"&fid=f12&fs={ALL_A_STOCKS_FS}"
@@ -863,12 +894,19 @@ def _fetch_all_dimensions() -> Dict:
                 # 区分涨跌停阈值：主板10%、科创(sh688)/创业(sz30) 20%
                 code = s.get("f12", "")
                 is_20 = code.startswith("sh688") or code.startswith("sz30")
+                is_lu = is_ld = False
                 if is_20:
-                    if pct >= 19.8: lu += 1
-                    if pct <= -19.8: ld += 1
+                    if pct >= 19.8: is_lu = True; lu += 1
+                    if pct <= -19.8: is_ld = True; ld += 1
                 else:
-                    if pct >= 9.8: lu += 1
-                    if pct <= -9.8: ld += 1
+                    if pct >= 9.8: is_lu = True; lu += 1
+                    if pct <= -9.8: is_ld = True; ld += 1
+                # 涨跌停股票按指数归类
+                if is_lu or is_ld:
+                    stock_labels = _classify_stock_code(code, idx_clf)
+                    for lbl in stock_labels:
+                        if is_lu: idx_lu[lbl] += 1
+                        if is_ld: idx_ld[lbl] += 1
 
         adr_result["up"], adr_result["down"], adr_result["flat"] = up, down, flat
         adr_result["sample_size"] = valid
@@ -889,6 +927,15 @@ def _fetch_all_dimensions() -> Dict:
         limits_result["sample_up"] = lu
         limits_result["sample_down"] = ld
         limits_result["extrapolated"] = False
+        # 指数分类涨跌停（供前端 M5b 卡片柱状图使用）
+        limits_result["index_breakdown"] = {
+            lbl: {
+                "name": INDEX_NAMES.get(lbl, lbl),
+                "limit_up": idx_lu.get(lbl, 0),
+                "limit_down": idx_ld.get(lbl, 0),
+            }
+            for lbl in INDEX_LABELS
+        }
 
         l_u, l_d = limits_result["limit_up"], limits_result["limit_down"]
         if l_u == 0 and l_d == 0: limits_result["status"] = "neutral"
