@@ -1616,9 +1616,91 @@ def _tdx_fetch_sector_ranking():
     return None
 
 
+def _em_fetch_sector_rankings():
+    """尝试从 Eastmoney push2delay 获取板块资金流排名。
+    返回 (sectors_list, f62_stale_count) 或 (None, 0) 表示失败。
+    sectors 格式: [{code, name, pct_chg, main_net_yi, ...}, ...]
+    """
+    try:
+        url = (
+            P2D + "/clist/get?pn=1&pz=30&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281"
+            "&fltt=2&invt=2&fid=f62&fs=m:90+t:2"
+            "&fields=f2,f3,f4,f12,f14,f62,f66,f104,f105,f128,f140,f141,f136,f152,f184"
+        )
+        raw = http_get(url, timeout=12)
+        data = json.loads(raw)
+        diffs = data.get("data", {}).get("diff", [])
+        sectors = []
+        f62_stale_count = 0
+        for item in diffs:
+            f62_val = item.get("f62")
+            if f62_val is None or f62_val == "-" or f62_val == "":
+                f62_stale_count += 1
+            net_in = safe_float(f62_val, 0)
+            net_in_yi = round(net_in / 100000000, 2)
+            sectors.append({
+                "code": item.get("f12", ""),
+                "name": item.get("f14", ""),
+                "pct_chg": safe_float(item.get("f3"), 0),
+                "main_net_yi": net_in_yi,
+                "super_large_yi": round(safe_float(item.get("f64", 0)) / 100000000, 2),
+                "large_yi": round(safe_float(item.get("f66", 0)) / 100000000, 2),
+            })
+        return sectors, f62_stale_count
+    except Exception as e:
+        print("[SentimentV2] EM sector fetch error: {}".format(e), flush=True)
+        return None, 0
+
+
+def _enrich_tdx_with_em_flow(tdx_sectors, em_sectors):
+    """将 Eastmoney 资金流数据合并到 TDX 板块数据中（按名称匹配）。
+    返回: (enriched_sectors, matched_count)
+    """
+    if not em_sectors:
+        return tdx_sectors, 0
+    em_by_name = {}
+    for s in em_sectors:
+        name = s.get("name", "")
+        if name:
+            em_by_name[name] = s
+    matched = 0
+    for s in tdx_sectors:
+        name = s.get("name", "")
+        if name in em_by_name:
+            em = em_by_name[name]
+            s["main_net_yi"] = em.get("main_net_yi", 0)
+            s["super_large_yi"] = em.get("super_large_yi", 0)
+            s["large_yi"] = em.get("large_yi", 0)
+            matched += 1
+    print("[SentimentV2] EM enrichment: matched {}/{} sectors".format(matched, len(tdx_sectors)), flush=True)
+    return tdx_sectors, matched
+
+
+def _tdx_use_pct_chg_as_proxy(sectors):
+    """当资金流数据不可用时，用涨跌幅作为流入/流出代理排序。
+    正涨幅的板块视为"流入"，负涨幅视为"流出"。
+    为前端柱状图可渲染，将 pct_chg 作为 main_net_yi 值存入。"""
+    # 按涨跌幅排序：涨幅大=资金涌入，跌幅大=资金流出
+    in_data_unsorted = [s for s in sectors if s.get("pct_chg", 0) >= 0]
+    out_data_unsorted = [s for s in sectors if s.get("pct_chg", 0) < 0]
+    in_data = sorted(in_data_unsorted, key=lambda s: s.get("pct_chg", 0), reverse=True)[:10]
+    out_data = sorted(out_data_unsorted, key=lambda s: s.get("pct_chg", 0))[:5]
+    
+    # 将 pct_chg 写入 main_net_yi 作为柱状图值（乘以3放大便于视觉比较）
+    for s in in_data + out_data:
+        s["main_net_yi"] = round(s.get("pct_chg", 0) * 3, 2)
+    
+    total_net = round(sum(s.get("main_net_yi", 0) for s in in_data), 2)
+    return in_data, out_data, total_net
+
+
 def m8_sector_flow():
     """板块涨跌排行 Top 10 + 最弱 Top 5 + 5日趋势
-    数据来源: 优先 TDX (通达信) 板块指数实时涨跌幅，回退 Eastmoney push2delay
+    数据来源: TDX (通达信) 板块指数 + Eastmoney 资金流补充
+    三层策略:
+      1. TDX 板块指数 → 名称 + 涨跌幅
+      2. Eastmoney → 资金流数据（主力净流入/流出）
+      3. 降级: TDX 涨跌幅作为流入/流出代理
     """
     cached = load_cache("sector_flow")
     if cached:
@@ -1628,19 +1710,40 @@ def m8_sector_flow():
     is_stale = False
     fallback_mode = None
     source_label = "tdx (通达信板块指数)"
+    sectors_sorted = None
 
-    # === Layer 1: TDX 板块指数（优先）===
+    # === Layer 1: TDX 板块指数 + Eastmoney 资金流补充 ===
     tdx_sectors = _tdx_fetch_sector_ranking()
+
     if tdx_sectors and len(tdx_sectors) >= 10:
-        sectors_sorted = tdx_sectors
         source_label = "pytdx (通达信板块指数, {}行业)".format(len(tdx_sectors))
 
-        # TDX 数据不含资金流，按涨跌幅排序：in=最强Top10，out=最弱（负涨幅）Top5
-        in_data = sectors_sorted[:10]
-        out_data = [s for s in reversed(sectors_sorted) if s.get("pct_chg", 0) < 0][:5]
-        total_net = round(sum(s.get("main_net_yi", 0) for s in in_data), 2)
+        # 尝试 Eastmoney 补充资金流数据
+        em_sectors, f62_stale = _em_fetch_sector_rankings()
+        em_flow_ok = False
+        if em_sectors and f62_stale <= len(em_sectors) // 2:
+            tdx_sectors, matched = _enrich_tdx_with_em_flow(tdx_sectors, em_sectors)
+            if matched >= 3:  # 至少匹配3个才算有效
+                em_flow_ok = True
+                source_label += " + EM资金流"
 
-        # 构建5日历史（复用快照系统）
+        if em_flow_ok:
+            # ✅ 资金流数据可用：按 main_net_yi 实时排序
+            sectors_sorted = sorted(tdx_sectors, key=lambda s: s.get("main_net_yi", 0), reverse=True)
+            in_data = sectors_sorted[:10]
+            out_data = [s for s in reversed(sectors_sorted) if s.get("main_net_yi", 0) < 0][:5]
+            total_net = round(sum(s.get("main_net_yi", 0) for s in in_data), 2)
+            is_stale = False
+            fallback_mode = None
+        else:
+            # ⚠️ 资金流不可用：用 pct_chg 作为代理
+            sectors_sorted = tdx_sectors  # 保持TDX原始排序
+            in_data, out_data, total_net = _tdx_use_pct_chg_as_proxy(tdx_sectors)
+            is_stale = True
+            fallback_mode = "pct_chg"
+            source_label += " (资金流不可用,按涨跌幅)"
+
+        # 构建5日历史
         snaps = _load_sector_flow_snaps()
         history = []
         for d in sorted(snaps.keys()):
@@ -1654,64 +1757,42 @@ def m8_sector_flow():
             "out_data": out_data,
             "total_net_yi": total_net,
             "history": history[-5:],
-            "is_stale": False,
-            "fallback_mode": None,
+            "is_stale": is_stale,
+            "fallback_mode": fallback_mode,
             "source": source_label,
         }
-        # TDX 路径也保存快照（收盘后）
-        if _market_closed_today():
+
+        # 收盘后保存快照（仅当有有效资金流数据时）
+        if not is_stale and _market_closed_today():
             snap_date = trading_days(1)[-1]
             _save_sector_flow_snap(snap_date, sectors_sorted)
+
     else:
-        # === Layer 2: Eastmoney push2delay（回退）===
+        # === Layer 2: Eastmoney 独立获取 ===
         source = "eastmoney sector flow"
+        sectors = None
 
         try:
-            # 拉取足够多的板块数据（pz=30），后续分别提取流入Top10和流出Top5
-            # po=1 降序（流入最多排前）；pz=30 确保覆盖大多数行业板块
-            url = (
-                P2D + "/clist/get?pn=1&pz=30&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281"
-                "&fltt=2&invt=2&fid=f62&fs=m:90+t:2"
-                "&fields=f2,f3,f4,f12,f14,f62,f66,f104,f105,f128,f140,f141,f136,f152,f184"
-            )
-            raw = http_get(url, timeout=12)
-            data = json.loads(raw)
-            diffs = data.get("data", {}).get("diff", [])
+            sectors, f62_stale_count = _em_fetch_sector_rankings()
 
-            sectors = []
-            f62_stale_count = 0
-            for item in diffs:
-                f62_val = item.get("f62")
-                if f62_val is None or f62_val == "-" or f62_val == "":
-                    f62_stale_count += 1
-                net_in = safe_float(f62_val, 0)
-                net_in_yi = round(net_in / 100000000, 2)
-                sectors.append({
-                    "code": item.get("f12", ""),
-                    "name": item.get("f14", ""),
-                    "pct_chg": safe_float(item.get("f3"), 0),
-                    "main_net_yi": net_in_yi,
-                    "super_large_yi": round(safe_float(item.get("f64", 0)) / 100000000, 2),
-                    "large_yi": round(safe_float(item.get("f66", 0)) / 100000000, 2),
-                })
-
-            # 检测 f62 空值比例：超过50%板块的f62为空 → 资金流数据不可用
-            if sectors and f62_stale_count > len(sectors) // 2:
-                is_stale = True
-                # 优先回退昨日快照
-                snaps = _load_sector_flow_snaps()
-                if snaps:
-                    snap_dates = sorted(snaps.keys(), reverse=True)
-                    yesterday_sectors = snaps.get(snap_dates[0], [])
-                    if yesterday_sectors:
-                        sectors = yesterday_sectors
-                        fallback_mode = "snap"
-                        source = "昨日快照回退 (P2D f62 为空)"
-                # 快照也无 → 按涨幅降级
-                if not fallback_mode:
-                    sectors.sort(key=lambda s: abs(s["pct_chg"]), reverse=True)
-                    fallback_mode = "pct_chg"
-                    source = "按涨跌幅降级 (P2D f62 为空)"
+            if sectors:
+                # 检测 f62 空值比例：超过50%板块的f62为空 → 资金流数据不可用
+                if f62_stale_count > len(sectors) // 2:
+                    is_stale = True
+                    # 优先回退昨日快照
+                    snaps = _load_sector_flow_snaps()
+                    if snaps:
+                        snap_dates = sorted(snaps.keys(), reverse=True)
+                        yesterday_sectors = snaps.get(snap_dates[0], [])
+                        if yesterday_sectors:
+                            sectors = yesterday_sectors
+                            fallback_mode = "snap"
+                            source = "昨日快照回退 (P2D f62 为空)"
+                    # 快照也无 → 按涨幅降级
+                    if not fallback_mode:
+                        sectors.sort(key=lambda s: abs(s["pct_chg"]), reverse=True)
+                        fallback_mode = "pct_chg"
+                        source = "按涨跌幅降级 (P2D f62 为空)"
 
             # 按 main_net_yi 排序：流入 Top10（降序）和流出 Top5（升序，最负的排前）
             sectors_sorted = sorted(sectors, key=lambda s: s.get("main_net_yi", 0), reverse=True)
@@ -2674,7 +2755,20 @@ def m3_capital_flow():
         except Exception:
             pass  # TDX 补充失败不阻塞主流程
     except Exception as e:
-        out = {"success": False, "error": str(e), "data": []}
+        # push2his 失败时尝试 DB 历史回退
+        cf_from_db = None
+        try:
+            if _query_cf_history:
+                db_rows = _query_cf_history(days=5)
+                if db_rows and len(db_rows) >= 2:
+                    cf_from_db = db_rows
+        except Exception:
+            pass
+        if cf_from_db:
+            out = {"success": True, "data": cf_from_db,
+                   "source": "DB fallback (API 异常: {})".format(str(e)[:60])}
+        else:
+            out = {"success": False, "error": str(e), "data": []}
     save_cache("cap_flow", out)
     return out
 
