@@ -356,6 +356,69 @@ def _tdx_get_combined_kline(count=10):
     return sh_kline
 
 
+# ===== Index Constituents Classifier (涨跌停按指数分类) =====
+INDEX_CONSTITUENTS_FILE = os.path.join(os.path.dirname(__file__), "index_constituents.json")
+
+# 指数内部标签 → 展示名
+INDEX_LABELS = ["sz50", "hs300", "zz500", "zz1000", "cyb", "kcb"]
+INDEX_NAMES = {
+    "sz50": "上证50", "hs300": "沪深300", "zz500": "中证500",
+    "zz1000": "中证1000", "cyb": "创业板", "kcb": "科创板",
+}
+
+_index_classifier_cache = None  # 每日缓存一次
+
+def _load_index_classifier():
+    """加载指数成分股分类器。返回 dict: stock_code -> set(index_label)
+
+    分类逻辑：
+      - 上证50/沪深300/中证500/中证1000: 从 index_constituents.json 读取
+      - 创业板(cyb): 代码以 30 开头（300xxx, 301xxx）
+      - 科创板(kcb): 代码以 688 开头
+    """
+    global _index_classifier_cache
+    if _index_classifier_cache is not None:
+        return _index_classifier_cache
+
+    classifier = {}
+
+    # 1) 从 JSON 加载四大指数成分股
+    if os.path.exists(INDEX_CONSTITUENTS_FILE):
+        try:
+            with open(INDEX_CONSTITUENTS_FILE, "r") as f:
+                constituents = json.load(f)
+            for label in ["sz50", "hs300", "zz500", "zz1000"]:
+                for code in constituents.get(label, []):
+                    if code not in classifier:
+                        classifier[code] = set()
+                    classifier[code].add(label)
+            print("[IndexClassifier] loaded {} stocks from 4 indices".format(len(classifier)), flush=True)
+        except Exception as e:
+            print("[IndexClassifier] error loading JSON: {}".format(e), flush=True)
+
+    # 2) 创业板/科创板用代码前缀（运行中动态判断，不预先建表）
+    #    在 _count 循环中直接检查 code.startswith("30") / code.startswith("688")
+
+    _index_classifier_cache = classifier
+    return classifier
+
+
+def _classify_stock(code, classifier=None):
+    """对单只股票按指数归类，返回 set of index_label。
+    classifier 仅包含四大指数成分；创业板/科创板由代码前缀动态判断。
+    """
+    labels = set()
+    # 从预加载表查找
+    if classifier:
+        labels.update(classifier.get(code, set()))
+    # 代码前缀判断
+    if code.startswith("30"):
+        labels.add("cyb")
+    if code.startswith("688"):
+        labels.add("kcb")
+    return labels
+
+
 # ===== M4+M5: ADR & Limits (push2delay clist, shared fetch) =====
 def _fetch_clist_adr_limits():
     """使用 Eastmoney clist 全量A股+北交所分页扫描，统计 ADR + 涨跌停家数。
@@ -382,6 +445,14 @@ def _fetch_clist_adr_limits():
     stats = [0, 0, 0, 0, 0, 0]  # up, down, flat, lu, ld, valid
     total_stocks = 0
 
+    # 按指数分类的涨跌停统计
+    index_clf = _load_index_classifier()
+    idx_lu = {}  # {sz50: N, hs300: N, ...}
+    idx_ld = {}  # {sz50: N, hs300: N, ...}
+    for label in INDEX_LABELS:
+        idx_lu[label] = 0
+        idx_ld[label] = 0
+
     def _is_20pct_board(code):
         """判断是否为20%涨跌停板块（科创板688/创业板30）"""
         return (code.startswith("688") or code.startswith("30"))
@@ -405,15 +476,23 @@ def _fetch_clist_adr_limits():
             else:          stats[2] += 1  # flat (零涨跌)
             # 区分涨跌停阈值：北交所±30%、科创/创业板±20%、主板±10%
             code = s.get("f12", "")
+            is_lu = False
+            is_ld = False
             if _is_30pct_board(code):
-                if pct >= 29.95:  stats[3] += 1  # lu (30%板)
-                if pct <= -29.95: stats[4] += 1  # ld (30%板)
+                if pct >= 29.95:  stats[3] += 1; is_lu = True
+                if pct <= -29.95: stats[4] += 1; is_ld = True
             elif _is_20pct_board(code):
-                if pct >= 19.95:  stats[3] += 1  # lu (20%板)
-                if pct <= -19.95: stats[4] += 1  # ld (20%板)
+                if pct >= 19.95:  stats[3] += 1; is_lu = True
+                if pct <= -19.95: stats[4] += 1; is_ld = True
             else:
-                if pct >= 9.95:   stats[3] += 1  # lu (10%板)
-                if pct <= -9.95:  stats[4] += 1  # ld (10%板)
+                if pct >= 9.95:   stats[3] += 1; is_lu = True
+                if pct <= -9.95:  stats[4] += 1; is_ld = True
+            # 按指数分类统计涨跌停
+            if is_lu or is_ld:
+                stock_labels = _classify_stock(code, index_clf)
+                for lbl in stock_labels:
+                    if is_lu: idx_lu[lbl] += 1
+                    if is_ld: idx_ld[lbl] += 1
 
     def _fetch_page(pn, retries=2):
         """拉取单页，支持重试"""
@@ -549,9 +628,18 @@ def _fetch_clist_adr_limits():
         "total_incl_bse": display_total, # SH+SZ + BSE 有效（用于展示）
         "halted": halted,
         "bse_valid": bse_valid,
+        # 按指数分类的涨跌停明细
+        "idx_lu": idx_lu,  # {sz50: N, hs300: N, ...}
+        "idx_ld": idx_ld,  # {sz50: N, hs300: N, ...}
     }
     print("[SentimentV2] clist_adr done: up={}, down={}, flat={}, valid={}, lu={}, ld={}, halted={}, errors={}".format(
         stats[0], stats[1], stats[2], stats[5], stats[3], stats[4], halted, page_errors), flush=True)
+    # 打印按指数分类统计
+    idx_summary = ", ".join(
+        "{}:涨停{}/跌停{}".format(INDEX_NAMES.get(lbl, lbl), idx_lu.get(lbl, 0), idx_ld.get(lbl, 0))
+        for lbl in INDEX_LABELS
+    )
+    print("[SentimentV2] clist_adr index breakdown: {}".format(idx_summary), flush=True)
     save_cache(raw_cache_key, result)
     return result
 
@@ -865,7 +953,25 @@ def m5_limits():
     
     raw = None
     source_label = ""
-    
+
+    # 辅助：从 raw 构建指数分类明细
+    def _build_idx_breakdown(raw_data):
+        """从 _fetch_clist_adr_limits 的结果构建前端友好的指数分类"""
+        idx_lu = raw_data.get("idx_lu", {})
+        idx_ld = raw_data.get("idx_ld", {})
+        breakdown = {}
+        for lbl in INDEX_LABELS:
+            breakdown[lbl] = {
+                "name": INDEX_NAMES.get(lbl, lbl),
+                "limit_up": idx_lu.get(lbl, 0),
+                "limit_down": idx_ld.get(lbl, 0),
+            }
+        return breakdown
+
+    # 空分类（历史快照/DB无此数据）
+    def _empty_idx_breakdown():
+        return {lbl: {"name": INDEX_NAMES.get(lbl, lbl), "limit_up": 0, "limit_down": 0} for lbl in INDEX_LABELS}
+
     # === 数据源: Eastmoney clist 全市场分页扫描 ===
     # 周末也调用：Eastmoney API 周末返回周五收盘数据，数据正确
     # TDX 已弃用：原因同 m4_adr()，get_security_list 缺失沪市数据。
@@ -914,6 +1020,7 @@ def m5_limits():
                         "status": _limits_status(limit_up, limit_down),
                         "ratio": round(limit_up / max(limit_down, 1), 1),
                         "is_closing": True,
+                        "index_breakdown": _empty_idx_breakdown(),
                     },
                     "source": "snapshot ({} 收盘)".format(recent_date),
                 }
@@ -934,6 +1041,7 @@ def m5_limits():
                             "extrapolated": False, "status": _limits_status(limit_up, limit_down),
                             "ratio": round(limit_up / max(limit_down, 1), 1),
                             "is_closing": True,
+                            "index_breakdown": _empty_idx_breakdown(),
                         },
                         "source": "DB ({} 收盘)".format(db_row.get("trade_date", "")),
                     }
@@ -962,6 +1070,7 @@ def m5_limits():
                 "extrapolated": False, "status": _limits_status(limit_up, limit_down),
                 "ratio": round(limit_up / max(limit_down, 1), 1),
                 "halted": raw.get("halted", 0),
+                "index_breakdown": _build_idx_breakdown(raw),
             },
             "source": source_label,
         }

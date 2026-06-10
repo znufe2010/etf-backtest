@@ -852,6 +852,64 @@ function renderLimits(mod) {
     var ratio = d.limit_up / Math.max(d.limit_down, 1);
     subEl.innerHTML = '比 <b>'+d.ratio.toFixed(1)+'</b> · '+d.status;
   }
+
+  // ── 指数分类明细卡片 ──────────────────────────────────────
+  var breakdown = d && d.index_breakdown;
+  if (breakdown) {
+    var idxCard = mkCard('M5b', '📊 指数涨跌停分类', '各指数涨停 / 跌停 (家)',
+      '<span class="anno-icon">💡</span> 当日涨跌停按所属指数归类统计（一只股票可属于多个指数）。',
+      (mod||{}).source||'');
+    document.getElementById('grid').appendChild(idxCard);
+    var idxCtx = idxCard.querySelector('canvas').getContext('2d');
+
+    var ORDER = ['sz50','hs300','zz500','zz1000','cyb','kcb'];
+    var NAMES_CN = {sz50:'上证50',hs300:'沪深300',zz500:'中证500',zz1000:'中证1000',cyb:'创业板',kcb:'科创板'};
+    var idxLabels = ORDER.map(function(k){ return (NAMES_CN[k]||k); });
+    var idxLu = ORDER.map(function(k){ return (breakdown[k]||{}).limit_up||0; });
+    var idxLd = ORDER.map(function(k){ return (breakdown[k]||{}).limit_down||0; });
+
+    var idxC = new Chart(idxCtx, {
+      type: 'bar',
+      data: {
+        labels: idxLabels,
+        datasets: [
+          { label:'涨停', data:idxLu, backgroundColor:'rgba(255,107,107,0.55)', borderColor:'#ff6b6b', borderWidth:1, borderRadius:4 },
+          { label:'跌停', data:idxLd, backgroundColor:'rgba(38,222,129,0.45)', borderColor:'#26de81', borderWidth:1, borderRadius:4 },
+        ]
+      },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        plugins:{
+          legend:{ labels:{ color:C.text, usePointStyle:true, padding:10, font:{size:10} } },
+          tooltip:{
+            backgroundColor:'rgba(22,27,34,0.95)', titleColor:C.text, bodyColor:C.text,
+            borderColor:C.border, borderWidth:1,
+            callbacks:{
+              afterBody: function(items){
+                var idx = items[0].dataIndex;
+                var key = ORDER[idx];
+                var lu = idxLu[idx]; var ld = idxLd[idx];
+                var r = ld > 0 ? (lu/ld).toFixed(1) : (lu > 0 ? '∞' : '--');
+                return ['涨/跌比: '+r];
+              }
+            }
+          }
+        },
+        scales:{
+          x:{ ticks:{ color:C.text, font:{size:10} }, grid:{ color:C.grid } },
+          y:{ title:{ display:true, text:'家数', color:C.text }, ticks:{ color:C.text, stepSize:1 }, grid:{ color:C.grid }, min:0 },
+        },
+      },
+    });
+    charts.push(idxC);
+
+    // 在 sub 里显示最强/最弱指数
+    var maxLuIdx = idxLu.indexOf(Math.max.apply(null,idxLu));
+    var maxLdIdx = idxLd.indexOf(Math.max.apply(null,idxLd));
+    var subEl2 = idxCard.querySelector('.sub');
+    subEl2.innerHTML = '涨停最多 <b style="color:#ff6b6b">'+(idxLabels[maxLuIdx]||'--')+'&nbsp;'+idxLu[maxLuIdx]+'家</b>'
+      + ' &nbsp;·&nbsp; 跌停最多 <b style="color:#26de81">'+(idxLabels[maxLdIdx]||'--')+'&nbsp;'+idxLd[maxLdIdx]+'家</b>';
+  }
 }
 
 // ── 沪深两市成交额柱状图 ──
