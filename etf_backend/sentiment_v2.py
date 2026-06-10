@@ -1139,15 +1139,24 @@ def m7_northbound():
 
     def _save_nb_snap(date_str, sh_net, sz_net, total):
         snaps = _load_nb_snaps()
-        snaps[date_str] = {"date": date_str, "sh_net_yi": sh_net, "sz_net_yi": sz_net, "total_yi": total}
-        # 只保留最近 10 天
+        print("[M7 NB] _save_nb_snap: date={}, sh_net={}, sz_net={}, total={}".format(
+            date_str, sh_net, sz_net, total), flush=True)
+        print("[M7 NB] _save_nb_snap: existing keys={}".format(list(snaps.keys())), flush=True)
+        snaps[date_str] = {
+            "date": date_str,
+            "sh_net_yi": sh_net, "sz_net_yi": sz_net, "total_yi": total,
+            # 兼容前端读取 total 字段
+            "sh_net": sh_net, "sz_net": sz_net, "total": total,
+        }
         keys = sorted(snaps.keys(), reverse=True)
         snaps = {k: snaps[k] for k in keys[:10]}
+        print("[M7 NB] _save_nb_snap: saving keys={}".format(list(snaps.keys())), flush=True)
         try:
             with open(SNAP_FILE, "w") as f:
                 json.dump(snaps, f, ensure_ascii=False)
-        except Exception:
-            pass
+            print("[M7 NB] _save_nb_snap: file saved successfully", flush=True)
+        except Exception as e:
+            print("[M7 NB] _save_nb_snap: ERROR saving file: {}".format(e), flush=True)
 
     out = None
     try:
@@ -1175,17 +1184,17 @@ def m7_northbound():
         # 只要有有效数据就立即写入快照（以 snap_date 为 key，天然去重）
         snap_date = (sh_north.get("date2") or sz_north.get("date2")
                      or trading_days(1)[-1])
-        has_data = abs(sh_net_wan) > 0 or abs(sz_net_wan) > 0
+        # 修复：只要有日期字段就保存快照（原逻辑只在净买入非零时保存，导致休市日丢失）
+        has_data = bool(sh_north.get("date2") or sz_north.get("date2"))
         if has_data:
             _save_nb_snap(snap_date, sh_net, sz_net, total)
 
-        # 从快照构建历史（最近5日）；不足时从 push2his K-line 回填
+        # 从快照构建历史（最近5日）；历史数据通过每日调用自动积累
         snaps = _load_nb_snaps()
         history = sorted(snaps.values(), key=lambda x: x.get("date", ""))[-5:]
         if len(history) < 5:
-            _backfill_nbsb_from_kline(SNAP_FILE, None, is_northbound=True, min_days=5)
-            snaps = _load_nb_snaps()
-            history = sorted(snaps.values(), key=lambda x: x.get("date", ""))[-5:]
+            print("[M7 NB] Warning: only {} days in history, need {} more days to reach 5".format(
+                len(history), 5 - len(history)), flush=True)
 
         # 盘中补充逻辑（已写入快照，history 已含当日，无需再补）
 
@@ -1213,9 +1222,8 @@ def m7_northbound():
             snaps = _load_nb_snaps()
             history = sorted(snaps.values(), key=lambda x: x.get("date", ""))[-5:]
             if len(history) < 5:
-                _backfill_nbsb_from_kline(SNAP_FILE, None, is_northbound=True, min_days=5)
-                snaps = _load_nb_snaps()
-                history = sorted(snaps.values(), key=lambda x: x.get("date", ""))[-5:]
+                print("[M7 NB] Warning: only {} days in history, need {} more days to reach 5".format(
+                    len(history), 5 - len(history)), flush=True)
             if history:
                 last = history[-1]
                 t = last["total_yi"]
