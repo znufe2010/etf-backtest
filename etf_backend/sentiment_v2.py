@@ -794,18 +794,28 @@ def _load_adr_limits_snaps():
             pass
     return {}
 
-def _save_adr_limits_snap(date_str, up, down, flat, lu, ld):
-    """将当日 ADR/涨跌停数据写入快照文件（仅在非零时写入）"""
+def _save_adr_limits_snap(date_str, up, down, flat, lu, ld, idx_lu=None, idx_ld=None):
+    """将当日 ADR/涨跌停数据写入快照文件（仅在非零时写入）
+    
+    idx_lu/idx_ld: 各指数涨跌停统计，格式 {sz50:N, hs300:N, ...}（可选）
+    """
     if up == 0 and down == 0:
         return
     snaps = _load_adr_limits_snaps()
-    snaps[date_str] = {"up": up, "down": down, "flat": flat, "lu": lu, "ld": ld}
+    snap_val = {"up": up, "down": down, "flat": flat, "lu": lu, "ld": ld}
+    if idx_lu is not None:
+        snap_val["idx_lu"] = idx_lu
+    if idx_ld is not None:
+        snap_val["idx_ld"] = idx_ld
+    snaps[date_str] = snap_val
     # 只保留最近 30 天
     cutoff = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
     snaps = {k: v for k, v in snaps.items() if k >= cutoff}
     try:
         with open(_get_adr_limits_snap_file(), "w") as fh:
             json.dump(snaps, fh, ensure_ascii=False)
+        print("[SentimentV2] adr_limits snap saved: date={} up={} down={} lu={} ld={}".format(
+            date_str, up, down, lu, ld), flush=True)
     except Exception as e:
         print("[SentimentV2] adr_limits snap save error: {}".format(e), flush=True)
 
@@ -841,83 +851,71 @@ def m4_adr():
         up, down, flat = raw["up"], raw["down"], raw["flat"]
         lu, ld = raw["lu_sample"], raw["ld_sample"]
 
-        # 当天有效数据：仅在收盘后写入快照（确保数据完整），避免盘中数据污染历史快照
+        # 收盘后写入快照（只保留完整收盘数据，不污染历史）
         if valid > 0 and _market_closed_today():
-            snap_date = trading_days(1)[-1]  # 最近一个已完成交易日（收盘后=今天）
+            snap_date = trading_days(1)[-1]  # 已收盘 → 今天即最新完成交易日
             _save_adr_limits_snap(snap_date, up, down, flat, lu, ld)
 
-        # 非交易时段（valid==0），优先从快照文件读取昨日收盘数据
-        if valid == 0:
-            snaps = _load_adr_limits_snaps()
-            # 找最近一个有数据的交易日快照
-            recent_date = None
-            for d in sorted(snaps.keys(), reverse=True):
-                if snaps[d].get("up", 0) or snaps[d].get("down", 0):
-                    recent_date = d
-                    break
-            if recent_date:
-                snap = snaps[recent_date]
-                up = snap.get("up", 0)
-                down = snap.get("down", 0)
-                flat = snap.get("flat", 0)
-                adr_v = round(up / max(down, 1), 2) if (up or down) else 1.0
-                out = {
-                    "success": True,
-                    "data": {
-                        "up": up, "down": down, "flat": flat,
-                        "adr": adr_v, "sample_size": up + down + flat,
-                        "status": _adr_status(adr_v),
-                        "is_closing": True,
-                    },
-                    "source": "snapshot ({} 收盘)".format(recent_date),
-                }
-                save_cache("adr", out)
-                return out
-
-            # 快照也没有，回退 DB 收盘统计
-            if _get_db_closing:
-                db_row = _get_db_closing()
-                if db_row:
-                    up = int(db_row.get("adr_up") or 0)
-                    down = int(db_row.get("adr_down") or 0)
-                    flat = int(db_row.get("adr_flat") or 0)
-                    adr_v = float(db_row.get("adr") or 0)
-                    if not adr_v and (up or down):
-                        adr_v = round(up / max(down, 1), 2)
-                    sample = int(db_row.get("adr_sample") or 0)
-                    out = {
-                        "success": True,
-                        "data": {
-                            "up": up, "down": down, "flat": flat,
-                            "adr": adr_v, "sample_size": sample or (up + down + flat),
-                            "status": _adr_status(adr_v),
-                            "is_closing": True,
-                        },
-                        "source": "DB ({} 收盘)".format(db_row.get("trade_date", "")),
-                    }
-                    save_cache("adr", out)
-                    return out
-
+        # ---- 始终展示前一交易日快照（与其他情绪指标保持一致）----
+        # 逻辑：不管盘中/盘前/收盘后，主显示都用快照（前一已完成交易日收盘）
+        snaps = _load_adr_limits_snaps()
+        recent_date = None
+        for d in sorted(snaps.keys(), reverse=True):
+            if snaps[d].get("up", 0) or snaps[d].get("down", 0):
+                recent_date = d
+                break
+        if recent_date:
+            snap = snaps[recent_date]
+            s_up = snap.get("up", 0)
+            s_down = snap.get("down", 0)
+            s_flat = snap.get("flat", 0)
+            adr_v = round(s_up / max(s_down, 1), 2) if (s_up or s_down) else 1.0
             out = {
-                "success": False,
-                "error": "非交易时段，暂无历史收盘数据",
-                "data": {"up": 0, "down": 0, "flat": 0, "adr": 1.0, "sample_size": 0, "status": "no_data"},
+                "success": True,
+                "data": {
+                    "up": s_up, "down": s_down, "flat": s_flat,
+                    "adr": adr_v, "sample_size": s_up + s_down + s_flat,
+                    "status": _adr_status(adr_v),
+                    "is_closing": True,
+                },
+                "source": "{} 收盘".format(recent_date),
             }
             save_cache("adr", out)
             return out
 
-        adr_v = round(up / max(down, 1), 2) if valid > 0 else 1.0
+        # 快照为空（系统初次启动）→ 回退 DB 收盘统计
+        if _get_db_closing:
+            db_row = _get_db_closing()
+            if db_row:
+                up = int(db_row.get("adr_up") or 0)
+                down = int(db_row.get("adr_down") or 0)
+                flat = int(db_row.get("adr_flat") or 0)
+                adr_v = float(db_row.get("adr") or 0)
+                if not adr_v and (up or down):
+                    adr_v = round(up / max(down, 1), 2)
+                sample = int(db_row.get("adr_sample") or 0)
+                out = {
+                    "success": True,
+                    "data": {
+                        "up": up, "down": down, "flat": flat,
+                        "adr": adr_v, "sample_size": sample or (up + down + flat),
+                        "status": _adr_status(adr_v),
+                        "is_closing": True,
+                    },
+                    "source": "DB ({} 收盘)".format(db_row.get("trade_date", "")),
+                }
+                save_cache("adr", out)
+                return out
 
+        # 无任何历史数据（首次部署，尚无收盘快照）
         out = {
-            "success": True,
-            "data": {
-                "up": up, "down": down, "flat": flat,
-                "adr": adr_v, "sample_size": valid,
-                "halted": raw.get("halted", 0),
-                "status": _adr_status(adr_v),
-            },
-            "source": source_label,
+            "success": False,
+            "error": "暂无历史收盘数据，等待首个交易日收盘后自动积累",
+            "data": {"up": 0, "down": 0, "flat": 0, "adr": 1.0, "sample_size": 0, "status": "no_data"},
         }
+        save_cache("adr", out)
+        return out
+
     except Exception as e:
         out = {"success": False, "error": str(e), "data": {}}
     save_cache("adr", out)
@@ -993,87 +991,83 @@ def m5_limits():
     try:
         valid = raw["valid"]
         lu_sample, ld_sample = raw["lu_sample"], raw["ld_sample"]
-        # 收盘后写入快照（与 m4_adr 共享同一快照文件）
+        # 收盘后写入快照（与 m4_adr 共享同一快照文件，同时存入指数分类数据）
         if valid > 0 and _market_closed_today():
             snap_date = trading_days(1)[-1]
             up, down, flat = raw["up"], raw["down"], raw["flat"]
-            _save_adr_limits_snap(snap_date, up, down, flat, lu_sample, ld_sample)
+            _save_adr_limits_snap(snap_date, up, down, flat, lu_sample, ld_sample,
+                                   idx_lu=raw.get("idx_lu"), idx_ld=raw.get("idx_ld"))
 
-        # 非交易时段（valid==0），优先从快照文件读取
-        if valid == 0:
-            snaps = _load_adr_limits_snaps()
-            recent_date = None
-            for d in sorted(snaps.keys(), reverse=True):
-                if snaps[d].get("lu", 0) or snaps[d].get("ld", 0):
-                    recent_date = d
-                    break
-            if recent_date:
-                snap = snaps[recent_date]
-                limit_up = snap.get("lu", 0)
-                limit_down = snap.get("ld", 0)
+        # ---- 始终展示前一交易日快照（与其他情绪指标保持一致）----
+        snaps = _load_adr_limits_snaps()
+        recent_date = None
+        for d in sorted(snaps.keys(), reverse=True):
+            if snaps[d].get("lu", 0) or snaps[d].get("ld", 0):
+                recent_date = d
+                break
+        if recent_date:
+            snap = snaps[recent_date]
+            limit_up = snap.get("lu", 0)
+            limit_down = snap.get("ld", 0)
+            # 指数分类：优先使用快照中存储的，否则空值
+            snap_idx_lu = snap.get("idx_lu")
+            snap_idx_ld = snap.get("idx_ld")
+            if snap_idx_lu is not None and snap_idx_ld is not None:
+                idx_breakdown = {
+                    lbl: {
+                        "name": INDEX_NAMES.get(lbl, lbl),
+                        "limit_up": snap_idx_lu.get(lbl, 0),
+                        "limit_down": snap_idx_ld.get(lbl, 0),
+                    }
+                    for lbl in INDEX_LABELS
+                }
+            else:
+                idx_breakdown = _empty_idx_breakdown()
+            out = {
+                "success": True,
+                "data": {
+                    "limit_up": limit_up, "limit_down": limit_down,
+                    "sample_up": 0, "sample_down": 0,
+                    "extrapolated": False,
+                    "status": _limits_status(limit_up, limit_down),
+                    "ratio": round(limit_up / max(limit_down, 1), 1),
+                    "is_closing": True,
+                    "index_breakdown": idx_breakdown,
+                },
+                "source": "{} 收盘".format(recent_date),
+            }
+            save_cache("limits", out)
+            return out
+
+        # 快照为空 → 回退 DB 收盘统计
+        if _get_db_closing:
+            db_row = _get_db_closing()
+            if db_row:
+                limit_up = int(db_row.get("limit_up") or 0)
+                limit_down = int(db_row.get("limit_down") or 0)
                 out = {
                     "success": True,
                     "data": {
                         "limit_up": limit_up, "limit_down": limit_down,
                         "sample_up": 0, "sample_down": 0,
-                        "extrapolated": False,
-                        "status": _limits_status(limit_up, limit_down),
+                        "extrapolated": False, "status": _limits_status(limit_up, limit_down),
                         "ratio": round(limit_up / max(limit_down, 1), 1),
                         "is_closing": True,
                         "index_breakdown": _empty_idx_breakdown(),
                     },
-                    "source": "snapshot ({} 收盘)".format(recent_date),
+                    "source": "DB ({} 收盘)".format(db_row.get("trade_date", "")),
                 }
                 save_cache("limits", out)
                 return out
 
-            # 快照也没有，回退 DB 收盘统计
-            if _get_db_closing:
-                db_row = _get_db_closing()
-                if db_row:
-                    limit_up = int(db_row.get("limit_up") or 0)
-                    limit_down = int(db_row.get("limit_down") or 0)
-                    out = {
-                        "success": True,
-                        "data": {
-                            "limit_up": limit_up, "limit_down": limit_down,
-                            "sample_up": 0, "sample_down": 0,
-                            "extrapolated": False, "status": _limits_status(limit_up, limit_down),
-                            "ratio": round(limit_up / max(limit_down, 1), 1),
-                            "is_closing": True,
-                            "index_breakdown": _empty_idx_breakdown(),
-                        },
-                        "source": "DB ({} 收盘)".format(db_row.get("trade_date", "")),
-                    }
-                    save_cache("limits", out)
-                    return out
-
-            out = {
-                "success": False,
-                "error": "非交易时段，暂无历史收盘数据",
-                "data": {"limit_up": 0, "limit_down": 0, "ratio": 0, "status": "no_data"},
-            }
-            save_cache("limits", out)
-            return out
-
-        if valid > 0:
-            limit_up = lu_sample
-            limit_down = ld_sample
-        else:
-            limit_up = limit_down = 0
-
         out = {
-            "success": True,
-            "data": {
-                "limit_up": limit_up, "limit_down": limit_down,
-                "sample_up": lu_sample, "sample_down": ld_sample,
-                "extrapolated": False, "status": _limits_status(limit_up, limit_down),
-                "ratio": round(limit_up / max(limit_down, 1), 1),
-                "halted": raw.get("halted", 0),
-                "index_breakdown": _build_idx_breakdown(raw),
-            },
-            "source": source_label,
+            "success": False,
+            "error": "暂无历史收盘数据，等待首个交易日收盘后自动积累",
+            "data": {"limit_up": 0, "limit_down": 0, "ratio": 0, "status": "no_data"},
         }
+        save_cache("limits", out)
+        return out
+
     except Exception as e:
         out = {"success": False, "error": str(e), "data": {}}
     save_cache("limits", out)
