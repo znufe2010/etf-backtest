@@ -1184,9 +1184,27 @@ def m7_northbound():
         # 只要有有效数据就立即写入快照（以 snap_date 为 key，天然去重）
         snap_date = (sh_north.get("date2") or sz_north.get("date2")
                      or trading_days(1)[-1])
-        # 修复：只要有日期字段就保存快照（原逻辑只在净买入非零时保存，导致休市日丢失）
+
+        # 智能判断是否有真实数据：buyAmt+sellAmt>0 说明市场有交易活动
+        # 如果 buyAmt/sellAmt/netBuyAmt 全部为0 → 盘前重置数据，不应保存快照
+        sh_buy_sell = abs(float(sh_north.get("buyAmt", 0) or 0)) + abs(float(sh_north.get("sellAmt", 0) or 0))
+        sz_buy_sell = abs(float(sz_north.get("buyAmt", 0) or 0)) + abs(float(sz_north.get("sellAmt", 0) or 0))
+        is_pre_market = (sh_buy_sell == 0 and sz_buy_sell == 0 and abs(sh_net_wan) == 0 and abs(sz_net_wan) == 0)
         has_data = bool(sh_north.get("date2") or sz_north.get("date2"))
-        if has_data:
+        print("[M7 NB] buySell: sh={:.0f}, sz={:.0f}, is_pre_market={}".format(
+            sh_buy_sell, sz_buy_sell, is_pre_market), flush=True)
+
+        if is_pre_market:
+            # 盘前数据全零 → 从快照取前一天真实数据用于展示
+            snaps_existing = _load_nb_snaps()
+            if snaps_existing:
+                latest_snap = sorted(snaps_existing.values(), key=lambda x: x.get("date", ""))[-1]
+                sh_net = latest_snap.get("sh_net_yi", 0)
+                sz_net = latest_snap.get("sz_net_yi", 0)
+                total = latest_snap.get("total_yi", 0)
+                print("[M7 NB] Pre-market, using snapshot from {}: total={:.2f}亿".format(
+                    latest_snap.get("date"), total), flush=True)
+        elif has_data:
             _save_nb_snap(snap_date, sh_net, sz_net, total)
 
         # 从快照构建历史（最近5日）；历史数据通过每日调用自动积累
@@ -1849,10 +1867,25 @@ def m10_southbound():
                      or trading_days(1)[-1])
         print("[M10 SB] snap_date={}, sh_south.date2={}, sz_south.date2={}".format(
             snap_date, sh_south.get("date2"), sz_south.get("date2")), flush=True)
-        # 修复：只要有日期字段就保存快照（即使净买入为0，休市日也需记录）
-        has_data = bool(sh_south.get("date2") or sz_south.get("date2"))
-        print("[M10 SB] has_data={}, will_save_snap={}".format(has_data, has_data), flush=True)
-        if has_data:
+
+        # 智能判断是否有真实数据：buyAmt+sellAmt>0 说明市场有交易活动
+        sh_buy_sell = abs(float(sh_south.get("buyAmt", 0) or 0)) + abs(float(sh_south.get("sellAmt", 0) or 0))
+        sz_buy_sell = abs(float(sz_south.get("buyAmt", 0) or 0)) + abs(float(sz_south.get("sellAmt", 0) or 0))
+        is_pre_market = (sh_buy_sell == 0 and sz_buy_sell == 0 and abs(sh_net_wan) == 0 and abs(sz_net_wan) == 0)
+        print("[M10 SB] buySell: sh={:.0f}, sz={:.0f}, is_pre_market={}".format(
+            sh_buy_sell, sz_buy_sell, is_pre_market), flush=True)
+
+        if is_pre_market:
+            # 盘前数据全零 → 从快照取前一天真实数据用于展示
+            snaps_existing = _load_sb_snaps()
+            if snaps_existing:
+                latest_snap = sorted(snaps_existing.values(), key=lambda x: x.get("date", ""))[-1]
+                sh_net = latest_snap.get("sh_net_yi", 0)
+                sz_net = latest_snap.get("sz_net_yi", 0)
+                total = latest_snap.get("total_yi", 0)
+                print("[M10 SB] Pre-market, using snapshot from {}: total={:.2f}亿".format(
+                    latest_snap.get("date"), total), flush=True)
+        else:
             _save_sb_snap(snap_date, sh_net, sz_net, total)
             print("[M10 SB] Snapshot saved for date={}".format(snap_date), flush=True)
 
